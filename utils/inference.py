@@ -36,5 +36,6 @@ class InferenceCallback(Callback):
                 input_tensor = torch.tensor([generated], device=self.model.device)
                 logits = self.model(input_tensor)
 
-        print(f"[Step {step}] Generated: {self.tokenizer.decode(generated)}")
+        decoded = self.tokenizer.decode(generated)
+        print(f"[Step {step}] Generated: {decoded}")
         self.model.train()

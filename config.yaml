@@ -1,0 +1,13 @@
+# config.yaml
+
+data_dir: ./data_local_test
+steps: 20
+batch_size: 2
+sequence_length: 1024
+
+learning_rate: 0.0004
+weight_decay: 0.1
+betas: [0.9, 0.95]
+
+inference_interval: 5
+inference_prompt: "Dutch is "

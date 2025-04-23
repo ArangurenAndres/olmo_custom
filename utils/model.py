@@ -5,7 +5,7 @@ from olmo_core.train.train_module.transformer import TransformerTrainModuleConfi
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig, TransformerActivationCheckpointingMode
 
-def build_model(vocab_size, device, sequence_length):
+def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas):
     model_config = TransformerConfig.olmo2_190M(
         vocab_size=vocab_size,
         dtype=DType.bfloat16 if device.type == "cuda" else DType.float32,
@@ -23,9 +23,9 @@ def build_model(vocab_size, device, sequence_length):
             model.lm_head.w_out.bias[0] = -100.0
 
     optim_config = AdamWConfig(
-        lr=4e-4,
-        weight_decay=0.1,
-        betas=(0.9, 0.95),
+        lr=lr,
+        weight_decay=weight_decay,
+        betas=tuple(betas),
         fused=False,
         group_overrides=[
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
