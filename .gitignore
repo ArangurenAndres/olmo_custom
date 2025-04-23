@@ -1,0 +1,38 @@
+# Images and media
+*.png
+*.jpg
+
+# macOS system files
+*.DS_Store
+
+# Logs
+*.log
+
+# Archives
+*.zip
+*.tar.gz
+*.tar
+
+# Environment files
+*.env
+
+#  Local training data
+data/
+data_local_test/
+wiki_tokens.npy
+
+#  Model code submodule
+olmo_core/
+
+#  Huggingface + transformers cache
+cache/
+__pycache__/
+*.pyc
+
+# VSCode / IDE
+.vscode/
+.idea/
+
+# Python virtual environments
+venv/
+.env/
