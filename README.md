@@ -24,7 +24,21 @@ https://github.com/allenai/OLMo-core/tree/main
 chmod +x setup.sh
 ./setup.sh
 ```
+
+4. Set wandb
+
+```sh
+pip install wandb
+```
+Then wandb login
+
+```sh
+wandb login
+```
+Paste the wandb API of your account
 ## Run project
+
+
 
 
 Run train.py
