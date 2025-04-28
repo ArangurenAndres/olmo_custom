@@ -10,6 +10,9 @@ def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas):
         vocab_size=vocab_size,
         dtype=DType.bfloat16 if device.type == "cuda" else DType.float32,
         init_method=InitMethod.normal,
+        #This activates GQA: mulitple query heads will share the same key value heads
+        # If n_heads is larger than n_kv_heads, then GQA is used
+        # To enable GQA set nkv_heads to a smaller number than n_heads
         n_kv_heads=3
     )
 
