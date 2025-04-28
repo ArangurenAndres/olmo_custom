@@ -1,23 +1,16 @@
-echo "Creating virtual environment..."
+# Exit immediately if a command fails
+set -e
+
+# Create a Python virtual environment called 'venv'
 python3 -m venv venv
 
-echo "Activating virtual environment..."
-# Detect the shell and activate accordingly
-if [[ "$SHELL" == */zsh ]]; then
-    source venv/bin/activate
-elif [[ "$SHELL" == */bash ]]; then
-    source venv/bin/activate
-else
-    echo "Please activate manually: source venv/bin/activate"
-fi
+# Activate the virtual environment
+source venv/bin/activate
 
-# Install dependencies if requirements.txt exists
-if [ -f "requirements.txt" ]; then
-    echo "Installing dependencies..."
-    pip install --upgrade pip
-    pip install -r requirements.txt
-else
-    echo "No requirements.txt found. Skipping dependency installation."
-fi
+# Upgrade pip
+pip install --upgrade pip
 
-echo "  Setup complete. Virtual environment is ready."
+# Install packages from requirements.txt
+pip install -r requirements.txt
+
+echo "Setup complete! Virtual environment created and packages installed."
