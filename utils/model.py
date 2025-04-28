@@ -9,7 +9,8 @@ def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas):
     model_config = TransformerConfig.olmo2_190M(
         vocab_size=vocab_size,
         dtype=DType.bfloat16 if device.type == "cuda" else DType.float32,
-        init_method=InitMethod.normal
+        init_method=InitMethod.normal,
+        n_kv_heads=3
     )
 
     model = model_config.build(init_device=device)

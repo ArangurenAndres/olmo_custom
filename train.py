@@ -34,9 +34,15 @@ class MLflowLossCallback(Callback):
 def run(config):
     seed_all(42)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # Determine the base device type
+    device_type = "cuda" if torch.cuda.is_available() else "cpu"
+    device = torch.device(device_type)
+
     if device.type == "cuda":
-        torch.cuda.set_device(device)
+        torch.cuda.set_device(0)      
+        print(f"Running on CUDA device: {torch.cuda.current_device()} (set explicitly to index 0)") # Optional: confirmation
+    else:
+        print("Running on CPU")
 
     # ======= Print the full config and device =======
     print("\n========== Training Configuration ==========")
