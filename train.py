@@ -1,5 +1,6 @@
 import os
 import pprint
+import datetime
 import torch
 import yaml
 import mlflow
@@ -54,7 +55,6 @@ def run(config):
         use_small_dataset=config.get("use_small_dataset", True)
     )
 
-
     model, train_module = build_model(
         vocab_size=tokenizer_config.padded_vocab_size(),
         device=device,
@@ -90,14 +90,31 @@ def run(config):
     ).with_callback("mlflow_loss", mlflow_cb)
 
     trainer = trainer_config.build(train_module=train_module, data_loader=dataloader)
+
+    # Start MLflow run
     with mlflow.start_run(run_name="olmo_local_run"):
         # Log all config parameters automatically
         mlflow.log_params(config)
-        mlflow.log_param("device", str(device))  # Also log the device (cuda/cpu)
+        mlflow.log_param("device", str(device))
+        mlflow.log_param("start_time", datetime.datetime.now().isoformat())
 
         print(f"Training for {config['steps']} steps on device: {device}\n")
         trainer.fit()
-        print("\n✅ Training complete")
+        print("\n Training complete")
+
+        # ===== Log final metrics =====
+        final_loss = getattr(trainer.train_module, "loss", None)
+        if final_loss is not None and isinstance(final_loss, torch.Tensor):
+            final_loss = final_loss.item()
+        mlflow.log_metric("final_loss", final_loss)
+        mlflow.log_metric("total_steps", trainer.global_step)
+
+        # ===== Save final model checkpoint as artifact (Optional) =====
+        final_checkpoint_path = os.path.join(save_dir, "final_model.pt")
+        torch.save(model.state_dict(), final_checkpoint_path)
+        mlflow.log_artifact(final_checkpoint_path)
+
+        print(f"\n Final model saved and logged to MLflow: {final_checkpoint_path}")
 
 
 if __name__ == "__main__":
