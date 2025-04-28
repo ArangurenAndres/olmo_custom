@@ -1,4 +1,5 @@
 import os
+import pprint
 import torch
 import yaml
 import mlflow
@@ -37,10 +38,22 @@ def run(config):
     if device.type == "cuda":
         torch.cuda.set_device(device)
 
+    # ======= Print the full config and device =======
+    print("\n========== Training Configuration ==========")
+    pprint.pprint(config)
+    print(f"Device: {device}")
+    print("=============================================\n")
+
     total_tokens = config["steps"] * config["batch_size"] * config["sequence_length"]
     total_sequences = int(total_tokens * 1.1 / config["sequence_length"])
 
-    dataloader, tokenizer_config = prepare_data(config["data_dir"], total_sequences)
+    dataloader, tokenizer_config = prepare_data(
+        data_dir=config["data_dir"],
+        total_sequences=total_sequences,
+        sequence_length=config["sequence_length"],
+        use_small_dataset=config.get("use_small_dataset", True)
+    )
+
 
     model, train_module = build_model(
         vocab_size=tokenizer_config.padded_vocab_size(),
@@ -77,22 +90,14 @@ def run(config):
     ).with_callback("mlflow_loss", mlflow_cb)
 
     trainer = trainer_config.build(train_module=train_module, data_loader=dataloader)
-
-    # 🚀 Start MLflow run
     with mlflow.start_run(run_name="olmo_local_run"):
-        mlflow.log_params({
-            "steps": config["steps"],
-            "batch_size": config["batch_size"],
-            "sequence_length": config["sequence_length"],
-            "learning_rate": config["learning_rate"],
-            "weight_decay": config["weight_decay"],
-            "betas": config["betas"],
-            "inference_prompt": config["inference_prompt"]
-        })
+        # Log all config parameters automatically
+        mlflow.log_params(config)
+        mlflow.log_param("device", str(device))  # Also log the device (cuda/cpu)
 
-        print(f" Training for {config['steps']} steps on device: {device}")
+        print(f"Training for {config['steps']} steps on device: {device}\n")
         trainer.fit()
-        print(" Training complete")
+        print("\n✅ Training complete")
 
 
 if __name__ == "__main__":
