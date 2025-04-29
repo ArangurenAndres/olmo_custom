@@ -20,4 +20,6 @@ n_kv_heads: 3
 
 ## LWS scaling
 
+## Include device and type for distirbuted job
+
 
