@@ -4,7 +4,7 @@ import datetime
 import torch
 import yaml
 import wandb  
-
+import shutil
 from olmo_core.train import TrainerConfig
 from olmo_core.train.common import Duration
 from olmo_core.train.trainer import Trainer
@@ -37,6 +37,16 @@ class WandbLossCallback(Callback):
 
 def run(config):
     seed_all(42)
+
+    save_dir = os.path.join(config["data_dir"], "checkpoints")
+    work_dir = os.path.join(config["data_dir"], "trainer_work_dir")
+
+    if os.path.exists(save_dir):
+        print(f"Deleting old checkpoint directory: {save_dir}")
+    shutil.rmtree(save_dir)
+    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(work_dir, exist_ok=True)
+
 
     device_str = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(device_str)
