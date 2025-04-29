@@ -1,0 +1,43 @@
+{
+  "os":  "macOS-15.4.1-arm64-arm-64bit-Mach-O",
+  "python":  "CPython 3.13.3",
+  "startedAt":  "2025-04-29T13:38:02.889248Z",
+  "program":  "/Users/andresaranguren/Desktop/leiden/S1/seminar_deep_learning/project/olmo_sadl/train.py",
+  "codePath":  "train.py",
+  "git":  {
+    "remote":  "https://github.com/ArangurenAndres/olmo_custom.git",
+    "commit":  "09076142b1a8361b0984c7d45ad406e3f2b65dc8"
+  },
+  "email":  "a.aranguren@umail.leidenuniv.nl",
+  "root":  "/Users/andresaranguren/Desktop/leiden/S1/seminar_deep_learning/project/olmo_sadl",
+  "host":  "MacBook-Pro-di-Andres.local",
+  "executable":  "/Users/andresaranguren/Desktop/leiden/S1/seminar_deep_learning/project/olmo_sadl/venv/bin/python3",
+  "codePathLocal":  "train.py",
+  "cpu_count":  8,
+  "cpu_count_logical":  8,
+  "disk":  {
+    "/":  {
+      "total":  "994662584320",
+      "used":  "314823577600"
+    },
+    "/System/Volumes/Data":  {
+      "total":  "994662584320",
+      "used":  "314823577600"
+    }
+  },
+  "memory":  {
+    "total":  "25769803776"
+  },
+  "cpu":  {
+    "count":  8,
+    "countLogical":  8
+  },
+  "apple":  {
+    "name":  "Apple M3",
+    "ecpuCores":  4,
+    "pcpuCores":  4,
+    "gpuCores":  10,
+    "memoryGb":  24,
+    "ramTotalBytes":  "25769803776"
+  }
+}

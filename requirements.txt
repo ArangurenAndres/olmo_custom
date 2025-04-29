@@ -90,6 +90,7 @@ pyproject_hooks
 python-dateutil
 pytz
 PyYAML
+pytest
 regex
 requests
 rich

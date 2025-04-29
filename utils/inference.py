@@ -20,6 +20,7 @@ class InferenceCallback(Callback):
     def run_inference(self, step):
         self.model.eval()
         tokens = [t for t in self.tokenizer.encode(self.prompt) if t != 0]
+        ## For GQA evaoute the input_tensor dimension
         input_tensor = torch.tensor([tokens], device=self.model.device)
         generated = tokens.copy()
 
