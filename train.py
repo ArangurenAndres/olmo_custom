@@ -1,8 +1,9 @@
 import os
 import pprint
+import datetime
 import torch
 import yaml
-import mlflow
+import wandb  
 
 from olmo_core.train import TrainerConfig
 from olmo_core.train.common import Duration
@@ -20,29 +21,32 @@ def load_config(path="config.yaml"):
         return yaml.safe_load(f)
 
 
-class MLflowLossCallback(Callback):
-    priority = 10  # Required for OLMo callback sorting
+class WandbLossCallback(Callback):
+    """
+    Logs loss to Weights & Biases after every step.
+    """
+    priority = 10
 
     def post_step(self):
         if self.trainer and hasattr(self.trainer.train_module, "loss"):
             loss = self.trainer.train_module.loss
             if isinstance(loss, torch.Tensor):
                 loss = loss.item()
-            mlflow.log_metric("loss", loss, step=self.trainer.global_step)
+            wandb.log({"loss": loss, "step": self.trainer.global_step})
 
 
 def run(config):
     seed_all(42)
 
-    # Determine the base device type
-    device_type = "cuda" if torch.cuda.is_available() else "cpu"
-    device = torch.device(device_type)
-
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device.type == "cuda":
         torch.cuda.set_device(0)      
         print(f"Running on CUDA device: {torch.cuda.current_device()} (set explicitly to index 0)") # Optional: confirmation
     else:
         print("Running on CPU")
+
+    # ======= Initialize wandb run =======
+    wandb.init(project="olmo_training", config=config)
 
     # ======= Print the full config and device =======
     print("\n========== Training Configuration ==========")
@@ -60,7 +64,6 @@ def run(config):
         use_small_dataset=config.get("use_small_dataset", True)
     )
 
-
     model, train_module = build_model(
         vocab_size=tokenizer_config.padded_vocab_size(),
         device=device,
@@ -75,14 +78,14 @@ def run(config):
     os.makedirs(save_dir, exist_ok=True)
     os.makedirs(work_dir, exist_ok=True)
 
-    # Callbacks
+    # ======= Callbacks =======
     inference_cb = InferenceCallback(
         model=model,
         tokenizer_config=tokenizer_config,
         prompt=config["inference_prompt"],
         interval=config["inference_interval"]
     )
-    mlflow_cb = MLflowLossCallback()
+    wandb_cb = WandbLossCallback()
 
     trainer_config = TrainerConfig(
         save_folder=save_dir,
@@ -93,17 +96,21 @@ def run(config):
         max_duration=Duration.steps(config["steps"]),
         device=str(device),
     ).with_callback("inference", inference_cb
-    ).with_callback("mlflow_loss", mlflow_cb)
+    ).with_callback("wandb_loss", wandb_cb)
 
     trainer = trainer_config.build(train_module=train_module, data_loader=dataloader)
-    with mlflow.start_run(run_name="olmo_local_run"):
-        # Log all config parameters automatically
-        mlflow.log_params(config)
-        mlflow.log_param("device", str(device))  # Also log the device (cuda/cpu)
 
-        print(f"Training for {config['steps']} steps on device: {device}\n")
-        trainer.fit()
-        print("\n✅ Training complete")
+    print(f"Training for {config['steps']} steps on device: {device}\n")
+    trainer.fit()
+    print("\n Training complete")
+
+    # ===== Save final model checkpoint =====
+    final_checkpoint_path = os.path.join(save_dir, "final_model.pt")
+    torch.save(model.state_dict(), final_checkpoint_path)
+    print(f"\n Final model saved at: {final_checkpoint_path}")
+
+    # ===== Finish wandb run =====
+    wandb.finish()
 
 
 if __name__ == "__main__":
