@@ -17,6 +17,7 @@ from olmo_core.train.train_module.transformer.config import TransformerActivatio
 
 # === Build model ===
 def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas, n_kv_heads):
+    # Create transformer configuration with specified number of key/value heads (n_kv_heads)
     model_config = TransformerConfig.olmo2_190M(
         vocab_size=vocab_size,
         dtype=DType.bfloat16 if device.type == "cuda" else DType.float32,
@@ -24,6 +25,7 @@ def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas, n_
         n_kv_heads=n_kv_heads  
     )
 
+    # Instantiate the model from the config
     model = model_config.build(init_device=device)
     model.activation_checkpointing_config = TransformerActivationCheckpointingConfig(
         mode=TransformerActivationCheckpointingMode.full
@@ -34,6 +36,7 @@ def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas, n_
         if hasattr(model.lm_head, "w_out") and model.lm_head.w_out.bias is not None:
             model.lm_head.w_out.bias[0] = -100.0
 
+    # Configure the optimizer
     optim_config = AdamWConfig(
         lr=lr,
         weight_decay=weight_decay,
@@ -43,7 +46,7 @@ def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas, n_
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ]
     )
-
+     # Build the training module
     train_module_config = TransformerTrainModuleConfig(
         rank_microbatch_size=sequence_length,
         max_sequence_length=sequence_length,
@@ -57,25 +60,29 @@ def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas, n_
 # === GQA assertion ===
 def assert_gqa(model, expected_n_heads=12):
     """
-    Automatically checks that GQA (Grouped Query Attention) is active in the given model.
-    Looks at the first block's attention layer weights.
+    Test whether GQA is correctly applied by verifying:
+    n_kv_heads < n_heads.
     """
+    # Access the attention layer of the first transformer block
     attention_layer = model.blocks["0"].attention
-
-    hidden_dim = attention_layer.w_q.in_features
-    q_out_features = attention_layer.w_q.out_features
-    k_out_features = attention_layer.w_k.out_features
-    v_out_features = attention_layer.w_v.out_features
-
+    # === Extract attention dimensions ===
+    hidden_dim = attention_layer.w_q.in_features # Total input dimension to queries
+    q_out_features = attention_layer.w_q.out_features # Total output dimension for queries
+    k_out_features = attention_layer.w_k.out_features # Total output dimension for keys
+    v_out_features = attention_layer.w_v.out_features # Total output dimension for values
+    # === Infer number of key/value heads ===
     n_heads = expected_n_heads
     head_dim = hidden_dim // n_heads
-    n_kv_heads = k_out_features // head_dim
+    n_kv_heads = k_out_features // head_dim # Each KV head has head_dim; compute how many there are
+
 
     print(f"Hidden dim: {hidden_dim}, head dim: {head_dim}")
     print(f"q_out_features: {q_out_features}, k_out_features: {k_out_features}, v_out_features: {v_out_features}")
     print(f"Detected n_heads: {n_heads}, n_kv_heads: {n_kv_heads}")
 
-    assert n_kv_heads < n_heads, f"❌ GQA not active! n_kv_heads ({n_kv_heads}) is not smaller than n_heads ({n_heads})."
+    # ===  GQA check ===
+    # If n_kv_heads < n_heads, then GQA is active (KV heads are shared across Q heads)
+    assert n_kv_heads < n_heads, f" GQA not active! n_kv_heads ({n_kv_heads}) is not smaller than n_heads ({n_heads})."
     print(" GQA is correctly active (n_kv_heads < n_heads).")
 
 # === Main ===
