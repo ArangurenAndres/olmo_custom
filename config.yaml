@@ -10,7 +10,7 @@ weight_decay: 0.1
 betas: [0.9, 0.95]
 
 inference_interval: 5
-inference_prompt: "The universie is "
+inference_prompt: "The universe is "
 
 # if set to true uses small wikipedia sample for testing purposes
 # else it will use the full wikipedia dataset
