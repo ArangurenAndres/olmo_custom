@@ -4,7 +4,7 @@ import datetime
 import torch
 import yaml
 import wandb  
-
+import shutil
 from olmo_core.train import TrainerConfig
 from olmo_core.train.common import Duration
 from olmo_core.train.trainer import Trainer
@@ -38,12 +38,24 @@ class WandbLossCallback(Callback):
 def run(config):
     seed_all(42)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device.type == "cuda":
-        torch.cuda.set_device(0)      
-        print(f"Running on CUDA device: {torch.cuda.current_device()} (set explicitly to index 0)") # Optional: confirmation
+    save_dir = os.path.join(config["data_dir"], "checkpoints")
+    work_dir = os.path.join(config["data_dir"], "trainer_work_dir")
+
+    if os.path.exists(save_dir):
+        print(f"Deleting old checkpoint directory: {save_dir}")
+    shutil.rmtree(save_dir)
+    os.makedirs(save_dir, exist_ok=True)
+    os.makedirs(work_dir, exist_ok=True)
+
+
+    device_str = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(device_str)
+
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.set_device(device.index if device.index is not None else 0)
+        print(f"Running on CUDA device: {torch.cuda.current_device()} ({device})")
     else:
-        print("Running on CPU")
+        print(f"Running on {device}")
 
     # ======= Initialize wandb run =======
     wandb.init(project="olmo_training", config=config)

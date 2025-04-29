@@ -18,6 +18,9 @@
 
 #  Local training data
 data/
+wandb/
+wandb/latest-run
+
 data_local_test/
 wiki_tokens.npy
 
