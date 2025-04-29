@@ -23,3 +23,6 @@ n_kv_heads: 3
 ## Include device and type for distirbuted job
 
 
+# Trainer
+# if lcoal use "cpu"
+device: "cpu"

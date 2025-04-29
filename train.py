@@ -38,12 +38,14 @@ class WandbLossCallback(Callback):
 def run(config):
     seed_all(42)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device.type == "cuda":
-        torch.cuda.set_device(0)      
-        print(f"Running on CUDA device: {torch.cuda.current_device()} (set explicitly to index 0)") # Optional: confirmation
+    device_str = config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device(device_str)
+
+    if device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.set_device(device.index if device.index is not None else 0)
+        print(f"Running on CUDA device: {torch.cuda.current_device()} ({device})")
     else:
-        print("Running on CPU")
+        print(f"Running on {device}")
 
     # ======= Initialize wandb run =======
     wandb.init(project="olmo_training", config=config)
