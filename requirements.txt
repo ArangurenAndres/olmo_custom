@@ -58,13 +58,11 @@ markdown-it-py
 MarkupSafe
 matplotlib
 mdurl
-mlflow
-mlflow-skinny
 mpmath
 multidict
 multiprocess
 networkx
-numpy
+numpy<2.0
 omegaconf
 opentelemetry-api
 opentelemetry-sdk
@@ -111,7 +109,7 @@ starlette
 sympy
 threadpoolctl
 tokenizers
-torch
+torch==2.1.0
 tqdm
 transformers
 typing-inspection
