@@ -126,3 +126,4 @@ wrapt
 xxhash
 yarl
 zipp
+wandb

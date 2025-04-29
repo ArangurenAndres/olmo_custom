@@ -1,0 +1,56 @@
+_wandb:
+    value:
+        cli_version: 0.19.9
+        m: []
+        python_version: 3.13.3
+        t:
+            "1":
+                - 1
+                - 5
+                - 11
+                - 49
+                - 51
+                - 53
+                - 55
+            "2":
+                - 1
+                - 5
+                - 11
+                - 49
+                - 51
+                - 53
+                - 55
+            "3":
+                - 2
+                - 16
+                - 23
+                - 55
+            "4": 3.13.3
+            "5": 0.19.9
+            "6": 4.50.3
+            "8":
+                - 5
+            "12": 0.19.9
+            "13": darwin-arm64
+batch_size:
+    value: 2
+betas:
+    value:
+        - 0.9
+        - 0.95
+data_dir:
+    value: ./data_local_test
+inference_interval:
+    value: 5
+inference_prompt:
+    value: 'The universie is '
+learning_rate:
+    value: 0.0004
+sequence_length:
+    value: 1024
+steps:
+    value: 20
+use_small_dataset:
+    value: true
+weight_decay:
+    value: 0.1

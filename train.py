@@ -60,6 +60,9 @@ def run(config):
     # ======= Initialize wandb run =======
     wandb.init(project="olmo_training", config=config)
 
+    # ======= Initialize wandb run =======
+    wandb.init(project="olmo_training", config=config)
+
     # ======= Print the full config and device =======
     print("\n========== Training Configuration ==========")
     pprint.pprint(config)
