@@ -5,22 +5,28 @@ from olmo_core.train.train_module.transformer import TransformerTrainModuleConfi
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig, TransformerActivationCheckpointingMode
 
-def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas):
+def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas, config):
+    # Extract optional GQA-related parameters from config
+    n_kv_heads = config.get("n_kv_heads", 3)
+    n_heads = config.get("n_heads", 12)
+
+    print(f"Building model with n_heads={n_heads}, n_kv_heads={n_kv_heads}, device={device}")
+
     model_config = TransformerConfig.olmo2_190M(
         vocab_size=vocab_size,
         dtype=DType.bfloat16 if device.type == "cuda" else DType.float32,
         init_method=InitMethod.normal,
-        #This activates GQA: mulitple query heads will share the same key value heads
-        # If n_heads is larger than n_kv_heads, then GQA is used
-        # To enable GQA set nkv_heads to a smaller number than n_heads
-        n_kv_heads=3
+        n_kv_heads=n_kv_heads,
+        n_heads=n_heads
     )
 
     model = model_config.build(init_device=device)
+
     model.activation_checkpointing_config = TransformerActivationCheckpointingConfig(
         mode=TransformerActivationCheckpointingMode.full
     )
 
+    # Optional: zero out [PAD] token embedding
     with torch.no_grad():
         model.embeddings.weight[0].zero_()
         if hasattr(model.lm_head, "w_out") and model.lm_head.w_out.bias is not None:
@@ -44,4 +50,5 @@ def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas):
     )
 
     train_module = train_module_config.build(model=model, device=device)
+
     return model, train_module

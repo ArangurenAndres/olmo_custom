@@ -80,14 +80,14 @@ def run(config):
     )
 
     model, train_module = build_model(
-        vocab_size=tokenizer_config.padded_vocab_size(),
-        device=device,
-        sequence_length=config["sequence_length"],
-        lr=config["learning_rate"],
-        weight_decay=config["weight_decay"],
-        betas=config["betas"]
+    vocab_size=tokenizer_config.padded_vocab_size(),
+    device=device,
+    sequence_length=config["sequence_length"],
+    lr=config["learning_rate"],
+    weight_decay=config["weight_decay"],
+    betas=config["betas"],
+    config=config 
     )
-
     save_dir = os.path.join(config["data_dir"], "checkpoints")
     work_dir = os.path.join(config["data_dir"], "trainer_work_dir")
     os.makedirs(save_dir, exist_ok=True)
