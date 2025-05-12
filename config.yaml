@@ -1,23 +1,110 @@
 # config.yaml
 
-data_dir: ./data_local_test
-steps: 20
-batch_size: 2
-sequence_length: 1024
+# -----------------------------------------------------------------------------
+# Data and Run Configuration
+# -----------------------------------------------------------------------------
+data_dir: ./data_local_test                # Directory for prepared data and checkpoints
+use_small_dataset: true                   # Whether to use a small subset of data for quick testing
+total_sequences_to_prepare: 2000          # Number of sequences to prepare for the .npy dataset file.
+                                          # Should be large enough for your training needs. For a short test run:
+                                          # e.g., steps * global_batch_size * 1.1 = 20 * 8 * 1.1 = 176.
+                                          # For actual runs, make this much larger (e.g., 1_000_000 or more).
+
+# -----------------------------------------------------------------------------
+# Training Hyperparameters
+# -----------------------------------------------------------------------------
+steps: 20                                 # Total number of global training steps (optimizer steps)
+global_batch_size: 2048                      # Total batch size across all GPUs.
+                                          # For FSDP, this will be divided among ranks.
+                                          # Example: 2 GPUs, global_batch_size 8 -> 4 sequences per GPU per global step.
+                                          # Your previous value was 2, which is very small for a global batch.
+                                          # Adjust based on your GPU memory and number of GPUs.
+sequence_length: 1024                     # Sequence length for the model
+
+gradient_accumulation_steps: 1            # Number of micro-steps to accumulate gradients before an optimizer step.
+                                          # Effective batch size = global_batch_size * gradient_accumulation_steps (conceptually, though OLMo applies global_batch_size per optimizer step)
+                                          # OLMo's TrainerConfig uses global_batch_size directly for the optimizer step.
+                                          # The device_train_microbatch_size is what's processed per forward/backward pass on a device.
+                                          # Set device_train_microbatch_size in TrainerConfig or let OLMo infer.
+                                          # If OLMo infers, it's often global_batch_size / world_size / gradient_accumulation_steps.
 
 learning_rate: 0.0004
 weight_decay: 0.1
-betas: [0.9, 0.95]
+betas: [0.9, 0.95]                        # AdamW betas
+seed: 42                                  # Base seed for reproducibility (will be adjusted per rank in train.py)
 
-inference_interval: 5
+# -----------------------------------------------------------------------------
+# Model Configuration (OLMo-190M base with GQA and LWS)
+# -----------------------------------------------------------------------------
+# These parameters define the model architecture.
+# Ensure your `utils/model.py` correctly uses these values, especially n_kv_heads,
+# and custom LWS scalars if they modify the TransformerConfig or model layers.
+model_dtype: "bf16"                       # Precision for model parameters and computation (e.g., "bf16", "fp32").
+                                          # This will guide dtype in build_model and FSDP settings.
+
+# OLMo-190M defaults (can be overridden if build_model passes them to TransformerConfig)
+global_dim: 768                           # d_model: Dimensionality of the model
+n_heads: 12                               # Number of attention heads
+head_dim: 64                              # Dimensionality of each attention head (global_dim / n_heads)
+
+# Group Query Attention (GQA)
+n_kv_heads: 3                             # Number of key/value heads for GQA. Must be <= n_heads.
+                                          # Make sure build_model passes this to TransformerConfig.
+
+# Layer-Wise Scaling (LWS) - Custom Parameters
+# Ensure your model implementation uses these scalars.
+fnn_scalars: [0.5, 4.0]
+qkv_scalars: [0.5, 1.0]
+
+# -----------------------------------------------------------------------------
+# FSDP and Activation Checkpointing
+# -----------------------------------------------------------------------------
+# FSDP settings are largely handled by TransformerDataParallelConfig in utils/model.py
+# Activation checkpointing mode can be configured if needed (e.g., "full", "fine_grained")
+# Defaulting to "full" as set in utils/model.py's TransformerTrainModuleConfig.
+# activation_checkpointing_mode: "full" # Example if you want to control it from here.
+
+# -----------------------------------------------------------------------------
+# Inference Callback
+# -----------------------------------------------------------------------------
+inference_interval: 5                     # Run inference every N global steps
 inference_prompt: "The universe is "
 
-use_small_dataset: true
+# -----------------------------------------------------------------------------
+# MLflow Logging (Optional)
+# -----------------------------------------------------------------------------
+mlflow_tracking_uri: null                 # Set to your MLflow server URI, or null/leave blank for local logging
+mlflow_experiment_name: "OLMo_FSDP_Custom_Model"
+mlflow_run_name: "fsdp_run_1_20steps"       # Descriptive name for this particular run
 
-# GQA parameters
-n_heads: 12
-n_kv_heads: 3
 
-## LWS scaling
 
+
+
+# # config.yaml
+
+# data_dir: ./data_local_test
+# steps: 20
+# batch_size: 2
+# sequence_length: 1024
+
+# learning_rate: 0.0004
+# weight_decay: 0.1
+# betas: [0.9, 0.95]
+
+# inference_interval: 5
+# inference_prompt: "The universe is "
+
+# use_small_dataset: true
+
+# # GQA parameters
+# n_heads: 12
+# n_kv_heads: 3
+
+# ## LWS scaling
+# fnn_scalars: [0.5, 4.0]
+# qkv_scalars: [0.5, 1.0]
+
+# global_dim: 768
+# head_dim: 64
 
