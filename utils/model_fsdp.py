@@ -1,6 +1,6 @@
 import torch
 from olmo_core.config import DType
-from olmo_core.nn.transformer import TransformerConfig, InitMethod
+from olmo_core.nn.transformer.config import TransformerConfig, InitMethod
 #highlight-start
 from olmo_core.train.train_module.transformer import (
     TransformerTrainModuleConfig,
@@ -56,9 +56,9 @@ def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas):
     # if your hardware supports it and you want to save memory.
     fsdp_config = TransformerDataParallelConfig(
         name=DataParallelType.fsdp,  # Specify FSDP
-        wrapping_strategy=TransformerDataParallelWrappingStrategy.full, # Or .blocks / .fine_grained
-        # param_dtype=DType.bfloat16, # Optional: if you want params in bfloat16
-        # reduce_dtype=DType.bfloat16, # Optional: if you want reductions in bfloat16
+        wrapping_strategy=TransformerDataParallelWrappingStrategy.fine_grained, # Or .blocks / .fine_grained
+        param_dtype=DType.bfloat16, # Optional: if you want params in bfloat16
+        reduce_dtype=DType.float32, # Optional: if you want reductions in bfloat16
     )
     #highlight-end
 

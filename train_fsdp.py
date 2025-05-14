@@ -6,7 +6,7 @@ import mlflow
 import argparse
 
 from olmo_core.distributed import utils # User's correct import
-from olmo_core.train import TrainerConfig
+from olmo_core.train.config import TrainerConfig
 from olmo_core.train.common import Duration
 from olmo_core.train.trainer import Trainer
 from olmo_core.utils import seed_all
@@ -14,8 +14,9 @@ from olmo_core.utils import seed_all
 
 from utils.dataloader_fsdp import prepare_data
 from utils.model_fsdp import build_model
-from utils.inference_fsdp import InferenceCallback
+from utils.inference import InferenceCallback
 from olmo_core.train.callbacks import Callback
+import torch.distributed as dist
 
 
 def load_config(path="config.yaml"):
@@ -95,15 +96,15 @@ def run(config, args):
 
     model, train_module = build_model(
         vocab_size=tokenizer_config.padded_vocab_size(),
-        # target_device=device,
+        device=device,
         sequence_length=sequence_length,
         lr=config["learning_rate"],
         weight_decay=config["weight_decay"],
         betas=config["betas"],
-        # n_kv_heads_val=config.get("n_kv_heads"),
+        # n_kv_heads=config.get("n_kv_heads"),
         # model_dtype_str=model_dtype_str,
-        fnn_scalars=config.get("fnn_scalars"), # Ensure build_model handles these
-        qkv_scalars=config.get("qkv_scalars")  # Ensure build_model handles these
+        # fnn_scalars=config.get("fnn_scalars"), # Ensure build_model handles these
+        # qkv_scalars=config.get("qkv_scalars")  # Ensure build_model handles these
     )
 
     save_dir = os.path.join(config["data_dir"], "checkpoints")
@@ -131,14 +132,14 @@ def run(config, args):
         "save_folder": save_dir,
         "save_overwrite": True,
         "work_dir": work_dir,
-        "metrics_collect_interval": 1,
+        # "metrics_collect_interval": 1,
         "cancel_check_interval": 5,
         "max_duration": Duration.steps(num_gradient_steps),
-        "precision": model_dtype_str,
-        "global_train_batch_size": global_batch_size,
+        # "precision": model_dtype_str,
+        # "global_train_batch_size": global_batch_size,
     }
-    if "gradient_accumulation_steps" in config:
-        trainer_config_params["gradient_accumulation_steps"] = config["gradient_accumulation_steps"]
+    # if "gradient_accumulation_steps" in config:
+    #     trainer_config_params["gradient_accumulation_steps"] = config["gradient_accumulation_steps"]
 
     trainer_config = TrainerConfig(**trainer_config_params
     ).with_callback("inference", inference_cb
@@ -146,27 +147,37 @@ def run(config, args):
 
     trainer = trainer_config.build(train_module=train_module, data_loader=dataloader)
     
+    active_mlflow_run = None  # Variable to store the active run object for rank 0
     if global_rank == 0:
         print(f"Starting training for {num_gradient_steps} global steps on world_size {world_size}...")
         mlflow.set_tracking_uri(config.get("mlflow_tracking_uri", None))
         mlflow.set_experiment(config.get("mlflow_experiment_name", "OLMo_FSDP_Custom_Model"))
-        active_run = mlflow.start_run(run_name=config.get("mlflow_run_name", "olmo_fsdp_run"))
-        mlflow.log_params(config)
-        # User commented out: log_extra_hyperparameters({"command_line_args": vars(args)}, active_run.info.run_id)
-        mlflow.log_param("world_size", world_size)
-        mlflow.log_param("effective_num_steps", num_gradient_steps)
-        mlflow.log_param("effective_inference_prompt", inference_prompt)
 
+        # Start MLflow run only on rank 0
+        active_mlflow_run = mlflow.start_run(run_name=config.get("mlflow_run_name", "olmo_fsdp_run"))
+        if active_mlflow_run:
+            mlflow.log_params(config)
+            # log_extra_hyperparameters was commented out by you
+            mlflow.log_param("world_size", world_size)
+            mlflow.log_param("effective_num_steps", num_gradient_steps)
+            mlflow.log_param("effective_inference_prompt", inference_prompt)
+        else:
+            # It's good practice to handle the case where MLflow might fail to start a run
+            print(f"Warning: MLflow run could not be started on rank {global_rank}.")
+
+    # trainer.fit() MUST be called by ALL ranks
     trainer.fit()
 
     if global_rank == 0:
         print(f"\n✅ Training complete on rank {global_rank}.")
-        mlflow.end_run()
-    
+        if active_mlflow_run:  # Only end the run if it was successfully started by rank 0
+            mlflow.end_run()
+            print(f"MLflow run ended on rank {global_rank}.")
+        else:
+            print(f"No active MLflow run to end on rank {global_rank}.")
+
     if world_size > 1:
-        #highlight-start
-        utils.barrier() # MODIFIED: Use utils.barrier
-        #highlight-end
+        utils.barrier() # Ensure all ranks complete before exiting run function potentially
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -176,4 +187,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config = load_config(args.config)
-    run(config, args)
+    try:
+        run(config, args)
+    finally:
+        if dist.is_initialized(): # Check if distributed process group is initialized
+            dist.destroy_process_group()
+            print("Successfully destroyed process group.")
