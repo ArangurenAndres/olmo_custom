@@ -22,7 +22,6 @@ data_local_test/
 wiki_tokens.npy
 
 #  Model code submodule
-olmo_core/
 mlruns/
 
 
