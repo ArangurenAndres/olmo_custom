@@ -27,9 +27,14 @@ chmod +x setup.sh
 ## Run project
 
 
-Run train.py
+Run train.py for usage on ARM-chips, i.e., M3 Macbook Pro, or single GPU
 
 ```sh
-python3 train.py --steps 50 --batch-size 2 --prompt "The universe is "    
+torchrun train.py --steps 50 --batch-size 2 --prompt "The universe is "    
 ```
 
+Run train_fsdp.py for Fully Sharded Data Parallel usage on multiple GPUs, minimum of 2
+
+```sh
+torchrun train_fsdp.py --steps 50 --batch-size 2 --prompt "The universe is "    
+```
