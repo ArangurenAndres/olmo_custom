@@ -178,7 +178,6 @@ class Transformer(nn.Module):
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
-        breakpoint()
 
         self.init_device = init_device
         self.init_method = InitMethod(init_method)

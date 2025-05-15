@@ -119,28 +119,41 @@ def verify_gqa(
         logger.error("Model has no transformer blocks")
         return False
     
-    # Check the first block's attention layer
+    # Check first and last blocks to account for layer-wise scaling
     first_block = model.blocks['0']
-    attention = first_block.attention
+    last_block_idx = str(len(model.blocks) - 1)
+    last_block = model.blocks[last_block_idx]
+
+    # Examine attention mechanisms
+    first_attention = first_block.attention
+    last_attention = last_block.attention
     
-    # Check attention head configuration
-    if hasattr(attention, 'n_heads') and hasattr(attention, 'n_kv_heads'):
-        actual_n_heads = attention.n_heads
-        actual_n_kv_heads = attention.n_kv_heads
+    # Get actual head counts to verify GQA is active
+    if hasattr(first_attention, 'w_q') and hasattr(first_attention, 'w_k'):
+        # Derive head dimensions from the linear layer dimensions
+        head_dim = first_attention.w_q.in_features // expected_n_heads
         
-        if actual_n_heads != expected_n_heads or actual_n_kv_heads != expected_n_kv_heads:
-            logger.error(f"GQA configuration mismatch: "
-                       f"Expected {expected_n_heads} query heads and {expected_n_kv_heads} KV heads, "
-                       f"got {actual_n_heads} query heads and {actual_n_kv_heads} KV heads")
+        first_q_heads = first_attention.w_q.out_features // head_dim
+        first_kv_heads = first_attention.w_k.out_features // head_dim
+        
+        last_q_heads = last_attention.w_q.out_features // head_dim
+        last_kv_heads = last_attention.w_k.out_features // head_dim
+        
+        # Check GQA is active (q heads > kv heads) in both first and last layer
+        first_is_gqa = first_q_heads > first_kv_heads and first_kv_heads >= 2
+        last_is_gqa = last_q_heads > last_kv_heads and last_kv_heads >= 2
+        
+        logger.info(f"First layer: {first_q_heads} query heads, {first_kv_heads} KV heads")
+        logger.info(f"Last layer: {last_q_heads} query heads, {last_kv_heads} KV heads")
+        
+        if first_is_gqa and last_is_gqa:
+            logger.info("GQA is active throughout the model with Layer-Wise Scaling")
+            return True
+        else:
+            logger.error(f"GQA configuration invalid: first layer {first_is_gqa}, last layer {last_is_gqa}")
             return False
-        
-        is_gqa = actual_n_kv_heads < actual_n_heads
-        logger.info(f"{'GQA' if is_gqa else 'Standard MHA'} is active: "
-                  f"{actual_n_heads} query heads, {actual_n_kv_heads} KV heads")
-        
-        return True
     else:
-        logger.error("Attention layer doesn't have n_heads or n_kv_heads attributes")
+        logger.error("Cannot verify GQA: attention architecture not as expected")
         return False
 
 def build_optimizer_config(
@@ -170,7 +183,7 @@ def build_optimizer_config(
             # No weight decay for normalization layers
             OptimGroupOverride("^(transformer|embeddings).*norm.*", weight_decay=0.0),
             # No weight decay for bias terms
-            OptimGroupOverride("^.*bias", weight_decay=0.0),
+            OptimGroupOverride("^(transformer|embeddings).*norm.*", opts=dict(weight_decay=0.0)),
             # Also exclude embedding weights from weight decay (following LLaMa recipe)
             OptimGroupOverride("^embeddings.weight", weight_decay=0.0)
         ]
