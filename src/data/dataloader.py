@@ -157,6 +157,7 @@ def get_distributed_sampler(dataset: torch.utils.data.Dataset) -> Optional[Distr
 
 def create_dataloader_config(
     batch_size: int,
+    sequence_length: int,
     num_workers: int = 0,
     seed: int = 42,
     pin_memory: bool = True,
@@ -175,8 +176,10 @@ def create_dataloader_config(
     Returns:
         NumpyDataLoaderConfig: Data loader configuration
     """
+    # Calculate global batch size in tokens
+    global_batch_size = batch_size * sequence_length
     return NumpyDataLoaderConfig(
-        global_batch_size=batch_size,
+        global_batch_size=global_batch_size,
         seed=seed,
         num_workers=num_workers
     )
@@ -238,11 +241,10 @@ def build_dataloader(
     )
     dataset = dataset_config.build()
     
-    # Create data loader config without sampler
     dataloader_config = create_dataloader_config(
         batch_size=batch_size,
+        sequence_length=sequence_length,  # Add this parameter
         num_workers=config.get("num_workers", 0)
-        # Don't pass pin_memory or sampler
     )
     
     # Build dataloader
