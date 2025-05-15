@@ -303,6 +303,22 @@ def main():
         device=device
     )
     
+    # Add after building train_module
+    if args.checkpoint and os.path.exists(args.checkpoint):
+        logger.info(f"Loading checkpoint from {args.checkpoint}")
+        from src.utils.checkpointing import load_checkpoint
+        metadata = load_checkpoint(
+            model=model,
+            optimizer=train_module.optimizer if hasattr(train_module, "optimizer") else None,
+            scheduler=None,  # Add if you have a scheduler
+            checkpoint_path=args.checkpoint,
+            strict=True,
+            load_optimizer=True,
+            is_fsdp=args.use_fsdp,
+            device=device
+        )
+        logger.info(f"Resumed from step {metadata.get('step', 0)}")
+
     # Define callbacks
     callbacks = []
     
