@@ -67,31 +67,27 @@ class InferenceCallback(Callback):
         # Initialize tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
     
-    def pre_train(self, trainer):
+    def pre_train(self):  # IMPORTANT: No trainer parameter here
         """Run inference before training starts."""
-        self.trainer = trainer
+        # self.trainer is already set by OLMo's Trainer in __post_init__
         if self.tokenizer is None:
             try:
                 from src.data import load_tokenizer
                 self.tokenizer = load_tokenizer(self.tokenizer_name)
             except ImportError:
                 self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
-        self.run_inference(trainer, step=0)
+        self.run_inference(step=0)  # Changed to just pass step
     
-    def post_step(self):
+    def post_step(self):  # No trainer parameter here either
         """Run inference periodically during training."""
-        # step = trainer.global_step
-        # if step % self.interval == 0 and step > 0:
-        #     self.run_inference(trainer, step=step)
         if self.trainer.global_step % self.interval == 0 and self.trainer.global_step > 0:
-            self.run_inference(self.trainer.global_step)
+            self.run_inference(step=self.trainer.global_step)
     
-    def run_inference(self, trainer, step: int):
+    def run_inference(self, step: int):  # Updated to only take step
         """
         Run text generation with the current model.
         
         Args:
-            trainer: OLMo trainer
             step: Current training step
         """
         # Only run on rank 0 if in distributed mode
@@ -104,7 +100,7 @@ class InferenceCallback(Callback):
         # Generate text
         try:
             # Prepare input
-            input_ids = self.tokenizer.encode(self.prompt, return_tensors="pt").to(trainer.device)
+            input_ids = self.tokenizer.encode(self.prompt, return_tensors="pt").to(self.trainer.device)
             
             # Set model to eval mode, generate text, then restore training mode
             model.eval()
