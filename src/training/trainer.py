@@ -57,7 +57,7 @@ def create_trainer(
     
     # Configure duration
     steps = config.get("steps", 1000)
-    duration = Duration.from_steps(steps)
+    duration = Duration.steps(steps)
     
     # Initialize trainer config
     trainer_config = TrainerConfig(
