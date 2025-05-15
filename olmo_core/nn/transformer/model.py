@@ -142,6 +142,7 @@ class Transformer(nn.Module):
         # query_dims = [int(self.make_divisible(self.d_model*m, )) for m in qvk_multiplies]
         head_multiple_of = 2
         init_head = block.attention.n_heads
+        print(init_head)
 
         #TODO: this is a problem, we'll need to change the defintion of the attention layer
         # Cuz now we get more heads, but the dimensionlity will not change, so we just get more small heads...
@@ -166,6 +167,7 @@ class Transformer(nn.Module):
         for block_idx in range(n_layers):
             block.feed_forward.hidden_size = dimsizes[block_idx] #init_hidden * multiplies[block_idx]
             block.attention.n_heads = model_dim[block_idx] #n_heads_layer[block_idx]
+            print(block.attention.n_heads)
             # block.attention.d_model = model_dim[block_idx]
             block_ = block.build(
                 d_model=d_model,
