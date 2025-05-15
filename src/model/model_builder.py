@@ -221,7 +221,7 @@ def build_train_module(
     
     # Create train module config
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=batch_size,
+        rank_microbatch_size=batch_size * sequence_length,
         max_sequence_length=sequence_length,
         optim=optimizer_config,
         compile_model=compile_model
