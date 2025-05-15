@@ -21,8 +21,8 @@ import wandb
 from configs.argparser import parse_args_train
 from configs.model_configs import get_model_config
 from configs.optimizer_configs import get_optimizer_config
-from data.load_dataset import load_prepared_dataset
-from data.dataloader import build_dataloader
+from data_utils.load_dataset import load_prepared_dataset
+from data_utils.dataloader import build_dataloader
 from training.trainer import run_training
 from utils.paths import setup_train_directories
 from utils.environment import setup_environment

@@ -48,13 +48,17 @@ n_heads: 12                               # Number of attention heads
 head_dim: 64                              # Dimensionality of each attention head (global_dim / n_heads)
 
 # Group Query Attention (GQA)
-n_kv_heads: 3                             # Number of key/value heads for GQA. Must be <= n_heads.
+n_kv_heads: 12                             # Number of key/value heads for GQA. Must be <= n_heads.
                                           # Make sure build_model passes this to TransformerConfig.
 
 # Layer-Wise Scaling (LWS) - Custom Parameters
 # Ensure your model implementation uses these scalars.
-fnn_scalars: [0.5, 4.0]
-qkv_scalars: [0.5, 1.0]
+fnn_scalars: [1, 1]
+qkv_scalars: [1, 1]
+#fnn_scalars: [0.5, 4.0]
+#qkv_scalars: [0.5, 1.0]
+
+
 
 # -----------------------------------------------------------------------------
 # FSDP and Activation Checkpointing

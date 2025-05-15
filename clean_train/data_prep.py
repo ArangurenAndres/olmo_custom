@@ -10,9 +10,9 @@ import argparse
 import numpy as np
 from utils.environment import setup_environment
 from utils.paths import setup_data_directories
-from data.dataset import _download_and_tokenize_wiki
-from data.validate_data_prep import validate_tokenized_data
-from data.tokenizer import get_tokenizer_config
+from data_utils.dataset import _download_and_tokenize_wiki
+from data_utils.validate_data_prep import validate_tokenized_data
+from data_utils.tokenizer import get_tokenizer_config
 from configs.argparser import parse_args_data_prep
 
 
