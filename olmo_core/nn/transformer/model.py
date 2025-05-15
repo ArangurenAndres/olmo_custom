@@ -147,7 +147,7 @@ class Transformer(nn.Module):
         # Cuz now we get more heads, but the dimensionlity will not change, so we just get more small heads...
         n_heads_layer = [int(self.make_divisible(init_head * m, head_multiple_of)) for m in qvk_multiplies]
         # head_dim = 128
-        head_dim =  yaml_object["head_dim"] #64
+        head_dim =  self.d_model // self.n_attn_heads
         model_dim = [int(self.make_divisible(d_model * m, head_multiple_of * head_dim)) for m in qvk_multiplies]
         # breakpoint()
 
