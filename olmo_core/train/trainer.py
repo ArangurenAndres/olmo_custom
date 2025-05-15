@@ -1113,6 +1113,8 @@ class Trainer:
                 callback.post_train_batch()
 
             for callback in self._iter_callbacks():
+                # print(callback)
+                # breakpoint()
                 callback.post_step()
 
             if first_batch or self.global_step % self.metrics_collect_interval == 0:
@@ -1121,6 +1123,7 @@ class Trainer:
                     torch.cuda.set_sync_debug_mode("warn")
 
             first_batch = False
+            # print("1111111111111111111111111111111111111")
 
             if self.training_complete:
                 # Finishing before the epoch is complete.

@@ -95,14 +95,15 @@ def create_trainer(
             trainer_config = trainer_config.with_callback("wandb", wandb_cb)
     
     # Add checkpoint callback on all ranks
-    ckpt_interval = config.get("checkpoint_interval", 100)
-    ckpt_cb = CheckpointCallback(
-        save_dir=save_dir,
-        interval=ckpt_interval,
-        save_optimizer=config.get("save_optimizer", True),
-        keep_last_k=config.get("keep_last_k", 3)
-    )
-    trainer_config = trainer_config.with_callback("checkpoint", ckpt_cb)
+    # TODO: This is crashing becuse the callback needs a trainer as extra argument on post_step, which is not given
+    # ckpt_interval = config.get("checkpoint_interval", 100)
+    # ckpt_cb = CheckpointCallback(
+    #     save_dir=save_dir,
+    #     interval=ckpt_interval,
+    #     save_optimizer=config.get("save_optimizer", True),
+    #     keep_last_k=config.get("keep_last_k", 3)
+    # )
+    # trainer_config = trainer_config.with_callback("checkpoint", ckpt_cb)
     
     # Add any additional user-provided callbacks
     if callbacks:

@@ -359,6 +359,7 @@ def main():
     # Run training
     logger.info(f"Starting training for {config.get('steps', 1000)} steps")
     start_time = time.time()
+    # breakpoint()
     
     try:
         trained_model = train_model(

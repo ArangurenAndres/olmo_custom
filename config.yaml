@@ -25,7 +25,7 @@ global_dim: 768
 head_dim: 64
 
 # Layer-Wise Scaling parameters
-fnn_scalars: [0.5, 4.0]
+fnn_scalars: [1.0, 2.0]
 qkv_scalars: [0.5, 1.0]
 output_scalars: [0.8, 1.2]
 verbose_scaling: false
