@@ -1,0 +1,29 @@
+olmo-training/
+├── olmo_core/                  # Core OLMo implementation (already exists)
+├── config/
+│   ├── base_config.yaml        # Base configuration
+│   └── fsdp_config.yaml        # FSDP-specific configurations
+├── scripts/
+│   ├── prepare_data.py         # Data preprocessing script
+│   └── launch_fsdp.py          # Multi-node launch script
+├── src/
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── dataloader.py       # Enhanced data loading with FSDP support
+│   │   └── tokenizer.py        # Tokenization utilities
+│   ├── model/
+│   │   ├── __init__.py
+│   │   ├── model_builder.py    # OLMo model with LWS and GQA
+│   │   └── lws_layer.py        # Layer-wise scaling implementation
+│   ├── training/
+│   │   ├── __init__.py
+│   │   ├── fsdp_utils.py       # FSDP setup utilities
+│   │   ├── trainer.py          # Training loop with FSDP support
+│   │   └── callbacks.py        # Training callbacks
+│   └── utils/
+│       ├── __init__.py
+│       ├── logging.py          # Enhanced logging
+│       ├── checkpointing.py    # FSDP-compatible checkpointing
+│       └── distributed.py      # Distributed training helpers
+├── train.py                   # Main training entry point
+└── README.md

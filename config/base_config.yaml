@@ -1,0 +1,47 @@
+# Base configuration for OLMo training with LWS and GQA
+
+# Data parameters
+data_dir: "./data"
+sequence_length: 1024
+batch_size: 8
+tokenizer_name: "allenai/gpt-neox-olmo-dolma-v1_5"
+
+# Training parameters
+steps: 10000
+learning_rate: 0.0004
+weight_decay: 0.1
+betas: [0.9, 0.95]
+grad_clip: 1.0
+log_interval: 10
+save_interval: 1000
+checkpoint_interval: 1000
+keep_last_k: 3
+
+# Model parameters
+vocab_size: 50304  # Will be adjusted based on tokenizer
+n_heads: 12
+n_kv_heads: 3      # GQA: n_kv_heads < n_heads
+global_dim: 768
+head_dim: 64
+
+# Layer-Wise Scaling parameters
+fnn_scalars: [0.5, 4.0]
+qkv_scalars: [0.5, 1.0]
+output_scalars: [0.8, 1.2]
+verbose_scaling: false
+
+# Inference parameters
+inference_interval: 50
+inference_prompt: "The universe is"
+max_new_tokens: 50
+
+# Logging and monitoring
+use_wandb: false
+wandb_project: "olmo_training"
+log_to_file: true
+log_file: "./logs/training.log"
+
+# System parameters
+num_workers: 4
+pin_memory: true
+compile_model: false

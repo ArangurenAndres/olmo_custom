@@ -1,0 +1,22 @@
+# FSDP-specific configuration for OLMo training
+
+# FSDP configuration
+mixed_precision: true              # Whether to use mixed precision
+shard_strategy: "FULL_SHARD"       # Sharding strategy (FULL_SHARD, SHARD_GRAD_OP, or NO_SHARD)
+cpu_offload: false                 # Whether to offload parameters to CPU
+backward_prefetch: true            # Whether to prefetch gradients for backward pass
+min_shard_size: 1024000            # Minimum shard size in bytes
+
+# Optimizer settings for FSDP
+use_fp32_optimizer: false          # Whether to use FP32 optimizer state
+gradient_accumulation: 1           # Gradient accumulation steps
+gradient_clipping: 1.0             # Gradient clipping value
+
+# Checkpointing
+sharded_checkpointing: true        # Whether to use sharded checkpointing
+checkpoint_folder: "checkpoints"   # Folder for checkpoints
+save_optimizer: false              # Whether to save optimizer state
+
+# Performance tuning
+activation_checkpointing: true     # Use activation checkpointing to save memory
+activation_cpu_offload: false      # Offload activations to CPU
