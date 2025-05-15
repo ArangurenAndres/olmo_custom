@@ -21,12 +21,34 @@ clean_train/
 │   └── callbacks/     
 │       └── inference_callback.py 
 ├── utils/             
-│   ├── environment.py  
-│   ├── paths.py        
+│   ├── environment.py  # Environment setup (e.g., API keys, cache directories)
+│   ├── paths.py        # Path management for data and model outputs
 │   └── token_0_handling.py 
 ├── data_prep.py        # Run to download and tokenize data 
 └── train.py            # Run to start training
 ```
+
+## Setting it up
+
+### `configs/argparser.py`
+This file handles command-line argument parsing for both training (`train.py`) and data preparation (`data_prep.py`). It defines the available arguments, their default values, and help descriptions. This allows for easy configuration of training parameters, data paths, and other settings from the command line.
+
+### `utils/paths.py`
+The `paths.py` module is responsible for managing directory structures for the project. It contains functions to:
+- Set up data directories for training, including a main data directory and a subdirectory for Hugging Face cache.
+- Create timestamped output folders for saving model checkpoints during training.
+- Set up data directories for data preparation, including the main data directory, Hugging Face cache, and a specific directory for Wikipedia data.
+It ensures that all necessary directories are created if they don't exist and provides a centralized way to define and access important paths.
+
+### `utils/environment.py`
+This script sets up the necessary environment variables for the training process. Key functionalities include:
+- Disabling tokenizer parallelism to avoid potential issues.
+- Setting up and creating local cache directories for Hugging Face `datasets`, `transformers`, and general `huggingface` assets. This helps in managing downloaded models and datasets efficiently.
+- Configuring the Weights & Biases API key for experiment tracking.
+
+## Setting up
+
+
 
 ## Training Pipeline
 
@@ -88,7 +110,7 @@ To set up your environment:
 First, prepare the Wikipedia dataset using the data preparation script:
 
 ```bash
-python clean_train/data_prep.py --sequence-length=1024 --target-tokens=300000 --percent-of-articles=0.01
+python clean_train/data_prep.py --sequence-length=1024 --target-tokens=300000 
 ```
 
 Available command-line arguments:
@@ -98,7 +120,6 @@ Available command-line arguments:
 --output-file STR         Output filename for tokenized data (default: wiki_tokens.npy)
 --target-tokens INT       Target number of tokens to collect (default: 300,000)
 --data-dir STR            Data directory to use (default: auto-detected)
---percent-of-articles FLOAT  Percentage of articles to use (default: 0.01)
 ```
 
 We don't know how many tokens per wikipedia article so we bound the amount of data donwloaded and tokenized by both, target tokens and percentage of articles (0.01 means 1% of wikipedia)
@@ -108,7 +129,7 @@ We don't know how many tokens per wikipedia article so we bound the amount of da
 After data preparation, run the training script:
 
 ```bash
-python clean_train/train.py --batch-size=24 --steps=100
+python clean_train/train.py --batch-size=24 --micro-batch-size=4 --steps=100
 ```
 
 ### Command-line Arguments
@@ -117,11 +138,22 @@ python clean_train/train.py --batch-size=24 --steps=100
 --gpu INT                GPU ID to use (default: 0)
 --steps INT              Total training steps (default: 100)
 --batch-size INT         Batch size (default: 2)
+--macro-batch-size INT   Micro Batch Size (default: 1)
 --inference-interval INT Run inference every N steps (default: 200)
 --inference-prompt STR   Prompt for inference (default: "Dutch is ")
 --wandb-project STR      WandB project name (default: "olmo-training")
 --wandb-name STR         WandB run name (default: "olmo-train")
 ```
+
+### Understanding Batch Sizes and Gradient Accumulation
+
+- **Batch Size**: The total number of tokens processed in a single update step (should be around 0.5M tokens)
+  - Example: `--batch-size=600` means 600 × 1024 = 614,400 tokens per update step
+
+- **Micro Batch Size**: The number of sequences that fit on a single GPU for one forward/backward pass
+  - Example: `--micro-batch-size=24` means 24 × 1024 = 24,576 tokens processed in one forward/backward pass
+
+The training system automatically handles gradient accumulation to reach the desired effective batch size across multiple micro batches.
 
 ### Example for Snellius with Slurm
 
