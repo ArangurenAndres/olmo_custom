@@ -243,6 +243,8 @@ class Attention(AttentionBase):
         self.n_rep = self.n_heads // self.n_kv_heads
         self.head_dim = d_model // n_heads
         
+        # What could work, is that we only allow n_heads to be even, and then we can ensure that
+        # head_dim is even as well. This would be a bit more efficient.
         # Verify head_dim is even for RoPE compatibility
         if self.head_dim % 2 != 0:
             raise ValueError(

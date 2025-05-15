@@ -48,7 +48,7 @@ def build_olmo_model(
     vocab_size = config.get("vocab_size", 50304)
     d_model = config.get("d_model", 768)  # ADD THIS LINE
     n_heads = config.get("n_heads", 12)
-    n_kv_heads = config.get("n_kv_heads", n_heads)  # Default to standard MHA if not specified
+    n_kv_heads = config.get("n_kv_heads", 4)  # Default to standard MHA if not specified
     n_layers = config.get("n_layers", 12)
 
     # Make sure dimensions are compatible for RoPE
