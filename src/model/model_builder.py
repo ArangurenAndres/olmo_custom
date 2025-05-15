@@ -60,9 +60,7 @@ def build_olmo_model(
         init_method=InitMethod.normal,
         # Support for GQA: n_kv_heads can be smaller than n_heads
         n_heads=n_heads,
-        n_kv_heads=n_kv_heads,
-        # Set the global dimension and head dimension
-        d_model=global_dim
+        n_kv_heads=n_kv_heads
     )
     
     # Build the model
