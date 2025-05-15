@@ -181,11 +181,11 @@ def build_optimizer_config(
         fused=torch.cuda.is_available(),  # Use fused implementation if CUDA is available
         group_overrides=[
             # No weight decay for normalization layers
-            OptimGroupOverride("^(transformer|embeddings).*norm.*", weight_decay=0.0),
+            OptimGroupOverride("^(transformer|embeddings).*norm.*", opts=dict(weight_decay=0.0)),
             # No weight decay for bias terms
             OptimGroupOverride("^(transformer|embeddings).*norm.*", opts=dict(weight_decay=0.0)),
             # Also exclude embedding weights from weight decay (following LLaMa recipe)
-            OptimGroupOverride("^embeddings.weight", weight_decay=0.0)
+            OptimGroupOverride("^embeddings.weight", opts=dict(weight_decay=0.0))
         ]
     )
     
