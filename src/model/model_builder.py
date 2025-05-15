@@ -51,12 +51,21 @@ def build_olmo_model(
     n_kv_heads = config.get("n_kv_heads", n_heads)  # Default to standard MHA if not specified
     n_layers = config.get("n_layers", 12)
 
-    # IMPORTANT: Ensure head_dim is even for RoPE compatibility
+    # Make sure dimensions are compatible for RoPE
+    # This ensures that head_dim will be even (required by RoPE)
     head_dim = d_model // n_heads
     if head_dim % 2 != 0:
-        # Adjust d_model to ensure head_dim is even
-        logger.warning(f"Adjusting d_model from {d_model} to {n_heads * (head_dim + 1)} to ensure even head_dim")
-        d_model = n_heads * (head_dim + 1)
+        logger.warning(f"Adjusting number of heads to ensure compatibility with RoPE")
+        # Adjust n_heads to make head_dim even
+        n_heads = d_model // (2 * (d_model // (2 * n_heads)))
+        n_kv_heads = min(n_kv_heads, n_heads)  # Ensure n_kv_heads <= n_heads
+    
+    # Ensure n_heads is divisible by n_kv_heads for proper GQA
+    if n_heads % n_kv_heads != 0:
+        # Round n_kv_heads down to the nearest value that divides n_heads evenly
+        old_n_kv_heads = n_kv_heads
+        n_kv_heads = n_heads // ((n_heads + n_kv_heads - 1) // n_kv_heads)
+        logger.warning(f"Adjusted n_kv_heads from {old_n_kv_heads} to {n_kv_heads} to divide n_heads evenly")
     
     logger.info(f"Building OLMo model with {n_heads} query heads and {n_kv_heads} KV heads")
     
@@ -67,7 +76,8 @@ def build_olmo_model(
         init_method=InitMethod.normal,
         # Support for GQA: n_kv_heads can be smaller than n_heads
         n_heads=n_heads,
-        n_kv_heads=n_kv_heads
+        n_kv_heads=n_kv_heads,
+        d_model=d_model,
     )
     
     # Build the model
