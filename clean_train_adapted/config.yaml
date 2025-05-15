@@ -1,0 +1,167 @@
+# config.yaml
+
+
+#------------------------------------------------------------------------------------------------
+# General Important Parameters (Top-level)
+#------------------------------------------------------------------------------------------------
+sequence_length: 1024
+# batch_size is a fallback if 'global_batch_size' in the Training Hyperparameters section is not specified.
+# It represents the number of sequences in a global batch (for one optimizer step).
+batch_size: 2 
+micro_batch_size: 1 # Number of sequences processed per device in a single forward/backward pass.
+steps: 20
+
+
+# -----------------------------------------------------------------------------
+# directories config
+# -----------------------------------------------------------------------------
+data_dir: ./data_local_test                # Directory for prepared data and checkpoints
+save_dir: checkpoints
+save_interval_steps: 10 # Save checkpoint every N steps
+
+#------------------------------------------------------------------------------------------------
+# DATA PREPARATION ARGUMENTS
+#------------------------------------------------------------------------------------------------
+data_preparation:
+  output_file_name: "wiki_tokens.npy" # Name of the tokenized file within data.data_dir
+  #tokenizer_name: "allenai/gpt-neox-olmo-dolma-v1_5" # assuming we're not changin tokenizer
+  hf_dataset_name: "wikipedia"
+  hf_dataset_subset: "20220301.en"
+  total_tokens_to_collect: 500_000_000
+  tokenizer_processing_batch_size: 1000 
+
+
+
+
+#------------------------------------------------------------------------------------------------
+# HF CACHE PATHS - default now, change if needed
+#------------------------------------------------------------------------------------------------
+hf_cache_paths:
+  transformers: cache/transformers
+  datasets: cache/datasets
+  huggingface: cache/huggingface
+
+
+#------------------------------------------------------------------------------------------------
+# WANDB API KEY - put your own key.
+#------------------------------------------------------------------------------------------------
+wandb_project: "all_in_olmo"
+wandb_name: "olmo-test"
+
+WANDB_API_KEY: "8e07447fa3d6269331f7ecd0b27f8518c2a65855"
+
+
+# -----------------------------------------------------------------------------
+# Training Hyperparameters
+# -----------------------------------------------------------------------------
+# The following block was previously enclosed in """ which is not valid YAML for comments.
+# Each line should be prefixed with # if it's a comment.
+# If these are intended to be active parameters, they should be uncommented and correctly formatted.
+
+# steps: 20                                 # Total number of global training steps (optimizer steps)
+# global_batch_size: 2048                      # Total batch size across all GPUs.
+#                                           # For FSDP, this will be divided among ranks.
+#                                           # Example: 2 GPUs, global_batch_size 8 -> 4 sequences per GPU per global step.
+#                                           # Your previous value was 2, which is very small for a global batch.
+#                                           # Adjust based on your GPU memory and number of GPUs.
+# sequence_length: 1024                     # Sequence length for the model
+# 
+# gradient_accumulation_steps: 1            # Number of micro-steps to accumulate gradients before an optimizer step.
+#                                           # Effective batch size = global_batch_size * gradient_accumulation_steps (conceptually, though OLMo applies global_batch_size per optimizer step)
+#                                           # OLMo's TrainerConfig uses global_batch_size directly for the optimizer step.
+#                                           # The device_train_microbatch_size is what's processed per forward/backward pass on a device.
+#                                           # Set device_train_microbatch_size in TrainerConfig or let OLMo infer.
+#                                           # If OLMo infers, it's often global_batch_size / world_size / gradient_accumulation_steps.
+
+# Assuming the parameters below this line are the ones you actually want active for this section:
+learning_rate: 0.0004
+weight_decay: 0.1
+betas: [0.9, 0.95]                        # AdamW betas
+seed: 42                                  # Base seed for reproducibility (will be adjusted per rank in train.py)
+
+# Note: The original config had 'steps', 'global_batch_size', 'sequence_length', 
+# and 'gradient_accumulation_steps' defined both at the top-level (lines 6-9) 
+# and within the commented-out block above. 
+# Ensure the active definitions (e.g., lines 6-9 and 66-77) reflect your intended settings.
+# If the block above (lines 57-71) was meant to be active, you need to remove the # from each line.
+# For now, I am assuming the top-level definitions and the learning_rate, weight_decay etc. below are the active ones.
+
+
+# -----------------------------------------------------------------------------
+# Model Configuration (OLMo-190M base with GQA and LWS)
+# -----------------------------------------------------------------------------
+# These parameters define the model architecture.
+# Ensure your `utils/model.py` correctly uses these values, especially n_kv_heads,
+# and custom LWS scalars if they modify the TransformerConfig or model layers.
+model_dtype: "bf16"                       # Precision for model parameters and computation (e.g., "bf16", "fp32").
+                                          # This will guide dtype in build_model and FSDP settings.
+
+# OLMo-190M defaults (can be overridden if build_model passes them to TransformerConfig)
+global_dim: 768                           # d_model: Dimensionality of the model
+n_heads: 12                               # Number of attention heads
+head_dim: 64                              # Dimensionality of each attention head (global_dim / n_heads)
+
+# Group Query Attention (GQA)
+n_kv_heads: 12                             # Number of key/value heads for GQA. Must be <= n_heads.
+                                          # Make sure build_model passes this to TransformerConfig.
+
+# Layer-Wise Scaling (LWS) - Custom Parameters
+# Ensure your model implementation uses these scalars.
+fnn_scalars: [1, 1]
+qkv_scalars: [1, 1]
+#fnn_scalars: [0.5, 4.0]
+#qkv_scalars: [0.5, 1.0]
+
+
+
+# -----------------------------------------------------------------------------
+# FSDP and Activation Checkpointing
+# -----------------------------------------------------------------------------
+# FSDP settings are largely handled by TransformerDataParallelConfig in utils/model.py
+# Activation checkpointing mode can be configured if needed (e.g., "full", "fine_grained")
+# Defaulting to "full" as set in utils/model.py's TransformerTrainModuleConfig.
+# activation_checkpointing_mode: "full" # Example if you want to control it from here.
+
+# -----------------------------------------------------------------------------
+# Inference Callback
+# -----------------------------------------------------------------------------
+inference_interval: 20                     # Run inference every N global steps
+inference_prompt: "The universe is "
+
+# -----------------------------------------------------------------------------
+# MLflow Logging (Optional)
+# -----------------------------------------------------------------------------
+#mlflow_tracking_uri: null                 # Set to your MLflow server URI, or null/leave blank for local logging
+#mlflow_experiment_name: "OLMo_FSDP_Custom_Model"
+#mlflow_run_name: "fsdp_run_1_20steps"       # Descriptive name for this particular run
+
+
+
+
+# # config.yaml
+
+# data_dir: ./data_local_test
+# steps: 20
+# batch_size: 2
+# sequence_length: 1024
+
+# learning_rate: 0.0004
+# weight_decay: 0.1
+# betas: [0.9, 0.95]
+
+# inference_interval: 5
+# inference_prompt: "The universe is "
+
+# use_small_dataset: true
+
+# # GQA parameters
+# n_heads: 12
+# n_kv_heads: 3
+
+# ## LWS scaling
+# fnn_scalars: [0.5, 4.0]
+# qkv_scalars: [0.5, 1.0]
+
+# global_dim: 768
+# head_dim: 64
+
