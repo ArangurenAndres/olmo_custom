@@ -350,6 +350,12 @@ def main():
         "data_dir": data_dir
     })
     
+    if os.path.exists(save_dir):
+        logger.info(f"Removing previous checkpoint directory: {save_dir}")
+        import shutil
+        shutil.rmtree(save_dir)
+        os.makedirs(save_dir, exist_ok=True)
+
     # Run training
     logger.info(f"Starting training for {config.get('steps', 1000)} steps")
     start_time = time.time()
