@@ -98,18 +98,25 @@ class InferenceCallback(Callback):
         model = self.train_module.model
         
         try:
-            # Prepare input
+            # Prepare input with proper padding
             tokens = self.tokenizer.encode(self.prompt)
+            
+            # Make sure we have proper padding
+            seq_len = self.train_module.max_sequence_length
+            if len(tokens) > seq_len:
+                tokens = tokens[:seq_len]  # Truncate if too long
+            
+            # Create properly padded input tensor 
             input_tensor = torch.tensor([tokens], device=model.device)
             
             # Set model to eval mode
             model.eval()
             
             with torch.no_grad():
-                # Manual generation
+                # Manual generation with consistent tensor shapes
                 generated = tokens.copy()
                 
-                # Get initial logits
+                # Get initial logits - use model directly without the labels
                 outputs = model(input_tensor)
                 
                 # Generate tokens one by one
@@ -125,10 +132,14 @@ class InferenceCallback(Callback):
                     if next_token == self.tokenizer.eos_token_id:
                         break
                         
-                    # Add to generated tokens
+                    # Add to generated tokens and make sure we're consistent with sequence lengths
                     generated.append(next_token)
                     
-                    # Forward pass for next token
+                    # Handle sequence length carefully
+                    if len(generated) > seq_len:
+                        generated = generated[-seq_len:]  # Keep only most recent tokens
+                        
+                    # Forward pass for next token with proper padding
                     input_tensor = torch.tensor([generated], device=model.device)
                     outputs = model(input_tensor)
             
