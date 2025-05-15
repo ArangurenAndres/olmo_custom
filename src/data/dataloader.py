@@ -179,7 +179,7 @@ def create_dataloader_config(
         global_batch_size=batch_size,
         seed=seed,
         num_workers=num_workers,
-        pin_memory=pin_memory,
+        # pin_memory=pin_memory,
         sampler=sampler
     )
 

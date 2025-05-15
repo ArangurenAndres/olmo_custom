@@ -7,7 +7,7 @@ batch_size: 8
 tokenizer_name: "allenai/gpt-neox-olmo-dolma-v1_5"
 
 # Training parameters
-steps: 10000
+steps: 100
 learning_rate: 0.0004
 weight_decay: 0.1
 betas: [0.9, 0.95]
@@ -36,7 +36,7 @@ inference_prompt: "The universe is"
 max_new_tokens: 50
 
 # Logging and monitoring
-use_wandb: false
+use_wandb: true
 wandb_project: "olmo_training"
 log_to_file: true
 log_file: "./logs/training.log"
