@@ -97,25 +97,46 @@ class InferenceCallback(Callback):
         # Get the model from train_module
         model = self.train_module.model
         
-        # Generate text
         try:
             # Prepare input
-            input_ids = self.tokenizer.encode(self.prompt, return_tensors="pt").to(self.trainer.device)
+            tokens = self.tokenizer.encode(self.prompt)
+            input_tensor = torch.tensor([tokens], device=model.device)
             
-            # Set model to eval mode, generate text, then restore training mode
+            # Set model to eval mode
             model.eval()
+            
             with torch.no_grad():
-                output_ids = model.generate(
-                    input_ids=input_ids,
-                    max_new_tokens=self.max_new_tokens,
-                    temperature=self.temperature,
-                    do_sample=True,
-                    pad_token_id=self.tokenizer.eos_token_id
-                )
+                # Manual generation
+                generated = tokens.copy()
+                
+                # Get initial logits
+                outputs = model(input_tensor)
+                
+                # Generate tokens one by one
+                for _ in range(self.max_new_tokens):
+                    next_token_logits = outputs.logits[0, -1, :] / self.temperature
+                    next_token_logits[0] = -float("inf")  # Prevent PAD token generation
+                    
+                    # Sample next token
+                    probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(probs, 1).item()
+                    
+                    # Stop if EOS
+                    if next_token == self.tokenizer.eos_token_id:
+                        break
+                        
+                    # Add to generated tokens
+                    generated.append(next_token)
+                    
+                    # Forward pass for next token
+                    input_tensor = torch.tensor([generated], device=model.device)
+                    outputs = model(input_tensor)
+            
+            # Set back to train mode
             model.train()
             
             # Decode generated text
-            generated_text = self.tokenizer.decode(output_ids[0], skip_special_tokens=True)
+            generated_text = self.tokenizer.decode(generated, skip_special_tokens=True)
             
             # Log the generation
             logger.info(f"\nStep {step}, Generated text: {generated_text}")
@@ -273,7 +294,7 @@ class WandBCallback(Callback):
             "loss"
         ]
     
-    def pre_train(self, trainer):
+    def pre_train(self):
         """Initialize WandB run before training."""
         # Only initialize on main process
         if is_distributed() and get_rank() != 0:
@@ -285,14 +306,14 @@ class WandBCallback(Callback):
             self.initialized = True
             
             # Log model details if available
-            if hasattr(trainer.train_module, 'model'):
-                model = trainer.train_module.model
+            if hasattr(self.trainer.train_module, 'model'):
+                model = self.trainer.train_module.model
                 wandb.config.update({
                     "num_parameters": sum(p.numel() for p in model.parameters()),
                     "num_trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
                 })
     
-    def post_step(self, trainer):
+    def post_step(self):
         """Log metrics after each step."""
         if not self.initialized or (is_distributed() and get_rank() != 0):
             return
@@ -301,21 +322,21 @@ class WandBCallback(Callback):
         metrics = {}
         
         # Log loss
-        if hasattr(trainer.train_state, 'loss'):
-            metrics["loss"] = trainer.train_state.loss
+        if hasattr(self.trainer.train_state, 'loss'):
+            metrics["loss"] = self.trainer.train_state.loss
             
         # Log learning rate if available
-        if hasattr(trainer, 'optimizer') and hasattr(trainer.optimizer, 'param_groups'):
-            metrics["learning_rate"] = trainer.optimizer.param_groups[0]['lr']
+        if hasattr(self.trainer, 'optimizer') and hasattr(self.trainer.optimizer, 'param_groups'):
+            metrics["learning_rate"] = self.trainer.optimizer.param_groups[0]['lr']
         
         # Log step
-        metrics["step"] = trainer.global_step
+        metrics["step"] = self.trainer.global_step
         
         # Send to wandb
         if metrics:
             wandb.log(metrics)
     
-    def post_train(self, trainer):
+    def post_train(self):
         """Finalize WandB run after training."""
         if not self.initialized or (is_distributed() and get_rank() != 0):
             return
