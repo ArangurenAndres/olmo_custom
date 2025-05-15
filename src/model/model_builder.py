@@ -62,8 +62,7 @@ def build_olmo_model(
         n_heads=n_heads,
         n_kv_heads=n_kv_heads,
         # Set the global dimension and head dimension
-        global_dim=global_dim,
-        head_dim=head_dim
+        d_model=global_dim
     )
     
     # Build the model
