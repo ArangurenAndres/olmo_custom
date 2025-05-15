@@ -180,12 +180,17 @@ def build_optimizer_config(
         betas=betas,
         fused=torch.cuda.is_available(),
         group_overrides=[
-            # No weight decay for normalization layers (match OLMo naming patterns)
-            OptimGroupOverride(".*norm.*", opts=dict(weight_decay=0.0)),
-            # No weight decay for bias terms
-            OptimGroupOverride(".*bias.*", opts=dict(weight_decay=0.0)),
-            # Also exclude embedding weights from weight decay
-            OptimGroupOverride("embeddings.weight", opts=dict(weight_decay=0.0))
+            # Use parameter lists instead of regex patterns
+            OptimGroupOverride(params=["lm_head.norm.weight", "blocks.*.attention_norm.weight", 
+                                      "blocks.*.feed_forward_norm.weight", "blocks.*.attention.q_norm.weight",
+                                      "blocks.*.attention.k_norm.weight"],
+                              opts=dict(weight_decay=0.0)),
+                              
+            # For bias terms - use a simple pattern without anchors
+            OptimGroupOverride("bias", opts=dict(weight_decay=0.0)),
+            
+            # For embeddings - use direct parameter name  
+            OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ]
     )
     
