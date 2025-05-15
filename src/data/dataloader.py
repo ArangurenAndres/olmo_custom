@@ -178,9 +178,7 @@ def create_dataloader_config(
     return NumpyDataLoaderConfig(
         global_batch_size=batch_size,
         seed=seed,
-        num_workers=num_workers,
-        # pin_memory=pin_memory,
-        sampler=sampler
+        num_workers=num_workers
     )
 
 def build_dataloader(
@@ -240,16 +238,19 @@ def build_dataloader(
     )
     dataset = dataset_config.build()
     
-    # Create sampler for distributed training if needed
-    sampler = get_distributed_sampler(dataset) if distributed else None
-    
-    # Create data loader
+    # Create data loader config without sampler
     dataloader_config = create_dataloader_config(
         batch_size=batch_size,
-        num_workers=config.get("num_workers", 0),
-        pin_memory=config.get("pin_memory", True),
-        sampler=sampler
+        num_workers=config.get("num_workers", 0)
+        # Don't pass pin_memory or sampler
     )
+    
+    # Build dataloader
+    # olmo_core handles distributed sampling internally based on process groups
     dataloader = dataloader_config.build(dataset)
+    
+    # Log info about distributed setup if applicable
+    if distributed:
+        logger.info(f"Using distributed data loading with {get_world_size()} workers")
     
     return dataloader, tokenizer_config, token_file
