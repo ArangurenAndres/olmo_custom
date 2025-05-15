@@ -243,6 +243,13 @@ class Attention(AttentionBase):
         self.n_rep = self.n_heads // self.n_kv_heads
         self.head_dim = d_model // n_heads
         
+        # Verify head_dim is even for RoPE compatibility
+        if self.head_dim % 2 != 0:
+            raise ValueError(
+                f"head_dim ({self.head_dim}) must be even for RoPE compatibility. "
+                f"Please ensure d_model ({d_model}) is divisible by n_heads * 2 ({n_heads * 2})."
+        )
+
         # Create projection matrices with proper dimensions
         self.w_q = nn.Linear(d_model, self.n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device)
         self.w_k = nn.Linear(

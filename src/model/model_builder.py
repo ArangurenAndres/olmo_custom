@@ -46,10 +46,17 @@ def build_olmo_model(
     
     # Extract model parameters from config
     vocab_size = config.get("vocab_size", 50304)
+    d_model = config.get("d_model", 768)  # ADD THIS LINE
     n_heads = config.get("n_heads", 12)
     n_kv_heads = config.get("n_kv_heads", n_heads)  # Default to standard MHA if not specified
-    global_dim = config.get("global_dim", 768)
-    head_dim = config.get("head_dim", 64)
+    n_layers = config.get("n_layers", 12)
+
+    # IMPORTANT: Ensure head_dim is even for RoPE compatibility
+    head_dim = d_model // n_heads
+    if head_dim % 2 != 0:
+        # Adjust d_model to ensure head_dim is even
+        logger.warning(f"Adjusting d_model from {d_model} to {n_heads * (head_dim + 1)} to ensure even head_dim")
+        d_model = n_heads * (head_dim + 1)
     
     logger.info(f"Building OLMo model with {n_heads} query heads and {n_kv_heads} KV heads")
     
