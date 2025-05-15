@@ -275,9 +275,9 @@ class Attention(AttentionBase):
         # self.head_dim = d_model // n_heads # TODO: make sure this is divisible
         # breakpoint()
 
-        print("--------")
-        print(self.n_heads)
-        print(self.n_kv_heads)
+        # print("--------")
+        # print(self.n_heads)
+        # print(self.n_kv_heads)
 
         self.w_q = nn.Linear(global_dim, n_heads, bias=bias, dtype=dtype, device=init_device)
 
@@ -405,13 +405,13 @@ class Attention(AttentionBase):
             q1 = q
             # breakpoint()
             # shape: (batch_size, n_heads, seq_len, head_dim)
-            try:
-                att = F.scaled_dot_product_attention(
-                    q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
-                )
+            # try:
+            att = F.scaled_dot_product_attention(
+                q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
+            )
             # print("attention passed")
-            except Exception as e:
-                breakpoint()
+            # except Exception as e:
+            #     breakpoint()
 
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()
