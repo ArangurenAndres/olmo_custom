@@ -62,6 +62,7 @@ class InferenceCallback(Callback):
         self.max_new_tokens = max_new_tokens
         self.temperature = temperature
         self.log_to_file = log_to_file
+        self.trainer = None
         
         # Initialize tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
@@ -69,6 +70,12 @@ class InferenceCallback(Callback):
     def pre_train(self, trainer):
         """Run inference before training starts."""
         self.trainer = trainer
+        if self.tokenizer is None:
+            try:
+                from src.data import load_tokenizer
+                self.tokenizer = load_tokenizer(self.tokenizer_name)
+            except ImportError:
+                self.tokenizer = AutoTokenizer.from_pretrained(self.tokenizer_name)
         self.run_inference(trainer, step=0)
     
     def post_step(self):
