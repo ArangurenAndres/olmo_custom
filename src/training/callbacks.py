@@ -68,13 +68,16 @@ class InferenceCallback(Callback):
     
     def pre_train(self, trainer):
         """Run inference before training starts."""
+        self.trainer = trainer
         self.run_inference(trainer, step=0)
     
-    def post_step(self, trainer):
+    def post_step(self):
         """Run inference periodically during training."""
-        step = trainer.global_step
-        if step % self.interval == 0 and step > 0:
-            self.run_inference(trainer, step=step)
+        # step = trainer.global_step
+        # if step % self.interval == 0 and step > 0:
+        #     self.run_inference(trainer, step=step)
+        if self.trainer.global_step % self.interval == 0 and self.trainer.global_step > 0:
+            self.run_inference(self.trainer.global_step)
     
     def run_inference(self, trainer, step: int):
         """
