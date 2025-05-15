@@ -189,9 +189,6 @@ def build_optimizer_config(
                 "blocks.*.attention.k_norm.weight"
             ], opts=dict(weight_decay=0.0)),
             
-            # For bias terms - use proper pattern and LIST of patterns
-            OptimGroupOverride(params=["*.bias*"], opts=dict(weight_decay=0.0)),
-            
             # For embeddings - use direct parameter name
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ]
