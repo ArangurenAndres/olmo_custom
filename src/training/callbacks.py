@@ -304,10 +304,6 @@ class WandBCallback(Callback):
     ):
         """
         Initialize the WandB callback.
-        
-        Args:
-            project_name: WandB project name
-            config: Configuration to log
         """
         if not WANDB_AVAILABLE:
             raise ImportError("wandb is required for WandBCallback")
@@ -348,36 +344,76 @@ class WandBCallback(Callback):
         # Extract and log metrics
         metrics = {}
         
-        # Log loss - safely access it wherever it might be stored
+        # FIXED: Direct approach to get loss from train_module
         try:
-            # Look in various possible locations for the loss
-            if hasattr(self.trainer, 'train_state') and hasattr(self.trainer.train_state, 'loss'):
-                metrics["loss"] = self.trainer.train_state.loss
-            elif hasattr(self.trainer, 'loss'):
-                metrics["loss"] = self.trainer.loss
-            elif hasattr(self.trainer, 'state') and hasattr(self.trainer.state, 'loss'):
-                metrics["loss"] = self.trainer.state.loss
-            elif hasattr(self.trainer, 'train_module') and hasattr(self.trainer.train_module, 'loss'):
-                metrics["loss"] = self.trainer.train_module.loss
+            # The most reliable way to get loss from OLMo's trainer
+            train_module = self.trainer.train_module
+            if hasattr(train_module, 'loss'):
+                loss = train_module.loss
+                # Ensure loss is a Python primitive, not a tensor
+                if isinstance(loss, torch.Tensor):
+                    metrics["loss"] = loss.item()
+                else:
+                    metrics["loss"] = float(loss)
+                
+                # Also calculate and log perplexity
+                if metrics["loss"] > 0:
+                    metrics["perplexity"] = torch.exp(torch.tensor(metrics["loss"])).item()
         except Exception as e:
-            # If we can't find loss, log a warning and continue
-            logger.warning(f"Could not find loss attribute: {e}")
+            logger.warning(f"Could not extract loss from train_module: {e}")
             
-        # Log learning rate if available
+            # Fallbacks - try other known locations
+            try:
+                if hasattr(self.trainer, 'train_state') and hasattr(self.trainer.train_state, 'loss'):
+                    loss = self.trainer.train_state.loss
+                    if isinstance(loss, torch.Tensor):
+                        metrics["loss"] = loss.item()
+                    else:
+                        metrics["loss"] = float(loss)
+            except Exception:
+                pass
+            
+            try:
+                # Check metrics dict directly
+                if hasattr(self.trainer, 'metrics') and isinstance(self.trainer.metrics, dict):
+                    for key, value in self.trainer.metrics.items():
+                        if "loss" in key.lower():
+                            if isinstance(value, torch.Tensor):
+                                metrics[key] = value.item()
+                            else:
+                                metrics[key] = float(value)
+            except Exception:
+                pass
+            
+        # Log learning rate
         try:
-            if hasattr(self.trainer, 'optimizer') and hasattr(self.trainer.optimizer, 'param_groups'):
-                metrics["learning_rate"] = self.trainer.optimizer.param_groups[0]['lr']
-            elif hasattr(self.trainer.train_module, 'optimizer') and hasattr(self.trainer.train_module.optimizer, 'param_groups'):
-                metrics["learning_rate"] = self.trainer.train_module.optimizer.param_groups[0]['lr']
+            optimizer = getattr(self.trainer.train_module, 'optimizer', None)
+            if optimizer and hasattr(optimizer, 'param_groups'):
+                metrics["learning_rate"] = optimizer.param_groups[0]['lr']
         except Exception as e:
-            logger.warning(f"Could not find learning rate: {e}")
+            logger.warning(f"Could not extract learning rate: {e}")
         
         # Log step
         metrics["step"] = self.trainer.global_step
         
-        # Send to wandb
+        # Add any other metrics from trainer stats if available 
+        try:
+            if hasattr(self.trainer, 'stats') and isinstance(self.trainer.stats, dict):
+                for k, v in self.trainer.stats.items():
+                    if isinstance(v, (int, float)) or (isinstance(v, torch.Tensor) and v.numel() == 1):
+                        if isinstance(v, torch.Tensor):
+                            metrics[k] = v.item()
+                        else:
+                            metrics[k] = v
+        except Exception as e:
+            logger.warning(f"Could not extract additional metrics from trainer.stats: {e}")
+        
+        # Debug log what we're sending to wandb
         if metrics:
+            logger.debug(f"Logging metrics to wandb: {metrics}")
             wandb.log(metrics)
+        else:
+            logger.warning("No metrics found to log to wandb")
     
     def post_train(self):
         """Finalize WandB run after training."""
