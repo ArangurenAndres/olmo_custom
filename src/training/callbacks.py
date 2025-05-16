@@ -303,13 +303,14 @@ class CheckpointCallback(Callback):
 
 class WandBCallback(Callback):
     """
-    Weights & Biases integration for experiment tracking.
+    Weights & Biases integration for OLMo training.
     """
     
     def __init__(
         self,
         project_name: str = "olmo_training",
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
+        create_run: bool = True
     ):
         """
         Initialize the WandB callback.
@@ -317,6 +318,7 @@ class WandBCallback(Callback):
         Args:
             project_name: WandB project name
             config: Configuration to log
+            create_run: Whether to create a new run or use existing
         """
         if not WANDB_AVAILABLE:
             raise ImportError("wandb is required for WandBCallback")
@@ -324,60 +326,95 @@ class WandBCallback(Callback):
         self.project_name = project_name
         self.config = config or {}
         self.initialized = False
-        
-        # Set default metrics to track
-        self.tracked_metrics = [
-            "loss"
-        ]
+        self.create_run = create_run
+        self.last_logged_step = -1
     
     def pre_train(self):
         """Initialize WandB run before training."""
-        # Only initialize on main process
         if is_distributed() and get_rank() != 0:
             return
             
-        # Initialize wandb
-        if not self.initialized:
-            wandb.init(project=self.project_name, config=self.config)
+        # Handle existing wandb run
+        if wandb.run is not None:
+            logger.info(f"WandB already initialized, using existing run: {wandb.run.name}")
+            self.initialized = True
+            return
+            
+        if self.create_run:
+            # Initialize a fresh run with unique name
+            run_name = f"olmo-train-{time.strftime('%Y%m%d-%H%M%S')}"
+            run = wandb.init(
+                project=self.project_name,
+                name=run_name,
+                config=self.config,
+                reinit=False
+            )
+            logger.info(f"Initialized new WandB run: {run.name}")
             self.initialized = True
             
             # Log model details if available
             if hasattr(self.trainer.train_module, 'model'):
                 model = self.trainer.train_module.model
                 wandb.config.update({
-                    "num_parameters": sum(p.numel() for p in model.parameters()),
-                    "num_trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
+                    "model/num_parameters": sum(p.numel() for p in model.parameters()),
+                    "model/trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
                 })
     
-    def post_step(self):
-        """Log metrics after each step."""
+    def log_metrics(self, step: int, metrics: Dict[str, Any]):
+        """
+        Log metrics received from trainer.
+        This is the correct hook to use in OLMo, not post_step!
+        """
         if not self.initialized or (is_distributed() and get_rank() != 0):
             return
             
-        # Extract and log metrics
-        metrics = {}
-        
-        # Log loss
-        if hasattr(self.trainer, 'loss'):
-            metrics["loss"] = self.trainer.loss
+        # Only log if step is greater than last logged step
+        if step <= self.last_logged_step:
+            return
             
-        # Log learning rate if available
-        if hasattr(self.trainer, 'optimizer') and hasattr(self.trainer.optimizer, 'param_groups'):
-            metrics["learning_rate"] = self.trainer.optimizer.param_groups[0]['lr']
+        self.last_logged_step = step
         
-        # Log step
-        metrics["step"] = self.trainer.global_step
-        
-        # Send to wandb
-        if metrics:
-            wandb.log(metrics)
+        # Convert any non-serializable values (like tensors) to Python scalars
+        clean_metrics = {}
+        for key, value in metrics.items():
+            if isinstance(value, torch.Tensor):
+                try:
+                    clean_metrics[key] = value.item()
+                except:
+                    pass  # Skip metrics that can't be converted
+            elif isinstance(value, (int, float)):
+                clean_metrics[key] = value
+                
+        # Ensure we have data worth logging
+        if clean_metrics:
+            # Make sure we log the step explicitly
+            wandb.log(clean_metrics, step=step)
+    
+    # We can still use post_step to handle additional custom logging if needed
+    def post_step(self):
+        """Additional logging at each step if needed."""
+        if not self.initialized or (is_distributed() and get_rank() != 0):
+            return
+            
+        # Get learning rate which might not be in the metrics
+        try:
+            if hasattr(self.trainer.train_module, 'optimizer'):
+                optim = self.trainer.train_module.optimizer
+                if hasattr(optim, 'param_groups') and len(optim.param_groups) > 0:
+                    wandb.log({
+                        "learning_rate": optim.param_groups[0]['lr']
+                    }, step=self.trainer.global_step)
+        except Exception as e:
+            logger.debug(f"Could not log learning rate: {e}")
     
     def post_train(self):
         """Finalize WandB run after training."""
         if not self.initialized or (is_distributed() and get_rank() != 0):
             return
-        
-        wandb.finish()
+            
+        # Only finish if we created the run
+        if self.create_run and wandb.run is not None:
+            wandb.finish()
 
 
 # class WandBCallback(Callback):
