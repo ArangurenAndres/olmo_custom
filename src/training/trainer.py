@@ -96,7 +96,7 @@ def create_trainer(
             wandb_cb = WandBCallback(
                 project_name=config.get("wandb_project", "olmo_training"),
                 config=config,
-                create_run=not is_wandb_initialized  # Only create a new run if one doesn't exist
+                # create_run=not is_wandb_initialized  # Only create a new run if one doesn't exist
             )
             trainer_config = trainer_config.with_callback("wandb", wandb_cb)
     
