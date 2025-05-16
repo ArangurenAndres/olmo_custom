@@ -304,6 +304,7 @@ class CheckpointCallback(Callback):
 class WandBCallback(Callback):
     """
     Weights & Biases integration for experiment tracking.
+    Revised to closely follow the user's working example structure.
     """
 
     def __init__(
@@ -311,155 +312,136 @@ class WandBCallback(Callback):
         project_name: str = "olmo_training",
         config: Optional[Dict[str, Any]] = None
     ):
-        """
-        Initialize the WandB callback.
-        """
-        super().__init__() # Ensure base class is initialized if it has an __init__
+        super().__init__() # Call to the base class initializer
         if not WANDB_AVAILABLE:
-            raise ImportError("wandb is required for WandBCallback. Please install with `pip install wandb`.")
+            raise ImportError(
+                "wandb is required for WandBCallback. "
+                "Please install with `pip install wandb`."
+            )
 
         self.project_name = project_name
         self.config = config or {}
-        self.wandb_initialized_by_this_callback = False # Flag to ensure init happens once per instance effectively
-        self.run = None # To store the wandb run object
+        self.wandb_initialized_this_instance = False # Flag to control initialization by this instance
 
     def pre_train(self):
         """Initialize WandB run before training."""
+        # Only initialize on the main process
         if is_distributed() and get_rank() != 0:
             return
 
-        if self.wandb_initialized_by_this_callback:
-            logger.warning(
-                "WandBCallback.pre_train called again on rank 0 after initial setup. Ignoring."
-            )
-            return
-
-        # Clean up any existing run only if it wasn't started by this callback instance
-        # or if we want to enforce a fresh run every time pre_train is effectively called.
-        # The original logic was to finish any active run.
-        if wandb.run is not None:
-            logger.warning(
-                f"An existing wandb run (ID: {wandb.run.id}, Name: {wandb.run.name}) was active. "
-                "The WandBCallback will finish it and start a new one as per its pre_train logic."
-            )
-            wandb.finish(quiet=True) # quiet=True to reduce log noise if this is common
-
-        # Start a new wandb run
-        self.run = wandb.init(project=self.project_name, config=self.config)
-        if self.run is None: # wandb.init should return run object, or raise error. Robustness check.
-             logger.error("wandb.init() failed to return a run object.")
-             return # Cannot proceed
-
-        self.wandb_initialized_by_this_callback = True
-        logger.info(f"WandB run (ID: {self.run.id}, Name: {self.run.name}) initialized by WandBCallback.")
-
-
-        # Log model details
-        # Ensure self.trainer is set by the Trainer before pre_train is called.
-        if hasattr(self.trainer, 'train_module') and hasattr(self.trainer.train_module, 'model'):
-            model = self.trainer.train_module.model
+        # Initialize wandb only if this instance hasn't done it yet
+        if not self.wandb_initialized_this_instance:
             try:
-                params_info = {
-                    "model/num_parameters": sum(p.numel() for p in model.parameters()),
-                    "model/trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
-                }
-                wandb.log(params_info)
-            except Exception as e:
-                logger.error(f"Failed to log model parameters: {e}")
-        else:
-            logger.warning("Could not log model parameters: trainer.train_module.model not found.")
+                # If wandb.run is already active (e.g. from outside this callback),
+                # wandb.init() might error or re-use, depending on wandb's internal state/settings.
+                # This simple approach relies on that behavior or assumes no other init interferes.
+                if wandb.run is not None:
+                    logger.warning(
+                        f"WandBCallback.pre_train: wandb.run is already active (ID: {wandb.run.id}, Name: {wandb.run.name}). "
+                        "This callback will attempt to initialize or use existing run as per wandb.init behavior. "
+                        "If issues persist, ensure wandb.init is called consistently."
+                    )
+                
+                wandb.init(project=self.project_name, config=self.config)
+                self.wandb_initialized_this_instance = True # Mark that this instance has initialized
+                logger.info(
+                    f"WandB run initialized by WandBCallback "
+                    f"(ID: {wandb.run.id if wandb.run else 'N/A'}, Name: {wandb.run.name if wandb.run else 'N/A'})."
+                )
 
+                # Log model details to wandb.config (as in the user's working example)
+                # self.trainer should be set by the Trainer class before pre_train is called.
+                if hasattr(self.trainer, 'train_module') and hasattr(self.trainer.train_module, 'model'):
+                    model = self.trainer.train_module.model
+                    model_params = {
+                        "model/num_parameters": sum(p.numel() for p in model.parameters()),
+                        "model/trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
+                    }
+                    wandb.config.update(model_params)
+                    logger.info(f"Updated wandb.config with model parameters: {model_params}")
+                else:
+                    logger.warning(
+                        "WandBCallback.pre_train: Could not log model parameters to wandb.config. "
+                        "trainer.train_module.model not found."
+                    )
+            except Exception as e:
+                logger.error(f"Error during WandBCallback.pre_train wandb.init or config update: {e}", exc_info=True)
+                # self.wandb_initialized_this_instance remains False, so it might retry or indicate a persistent issue.
+        else:
+            logger.info("WandBCallback.pre_train: WandB run already initialized by this instance. Skipping.")
 
     def post_step(self):
         """Log metrics after each step."""
-        if not self.wandb_initialized_by_this_callback or (is_distributed() and get_rank() != 0) or wandb.run is None:
+        if not self.wandb_initialized_this_instance or (is_distributed() and get_rank() != 0) or wandb.run is None:
             return
 
-        # Get current step
-        # Ensure self.trainer is set and has global_step
+        # Ensure self.trainer and essential attributes are available
         if not hasattr(self.trainer, 'global_step'):
-            logger.warning("trainer.global_step not found. Cannot log metrics for step.")
+            logger.warning("WandBCallback.post_step: trainer.global_step not found. Cannot log metrics.")
             return
-        step = self.trainer.global_step
+        current_step = self.trainer.global_step
 
-        metrics = {} # Initialize metrics dictionary for this step
+        metrics_to_log = {}
 
-        # Get loss directly from trainer
+        # Log loss: Using self.trainer.loss (scalar float from olmo_core.Trainer)
+        # If self.trainer.train_state.loss is the correct path for your specific setup,
+        # change `self.trainer.loss` to `self.trainer.train_state.loss` below.
         if hasattr(self.trainer, 'loss') and self.trainer.loss is not None:
-            # self.trainer.loss should already be a scalar float
-            current_loss = float(self.trainer.loss)
-            metrics["train/loss"] = current_loss # Using a prefix like 'train/' is good practice
-            if current_loss > 0:
+            loss_val = float(self.trainer.loss) # Stored as float by olmo_core.Trainer
+            metrics_to_log["train/loss"] = loss_val
+            if loss_val > 0: # Calculate perplexity only for positive loss
                 try:
-                    metrics["train/perplexity"] = math.exp(current_loss)
+                    metrics_to_log["train/perplexity"] = math.exp(loss_val)
                 except OverflowError:
-                    metrics["train/perplexity"] = float('inf')
-                    logger.warning(f"OverflowError calculating perplexity for loss {current_loss} at step {step}.")
-                except Exception as e: # General exception for math.exp
-                    logger.warning(f"Error calculating perplexity for loss {current_loss} at step {step}: {e}")
+                    metrics_to_log["train/perplexity"] = float('inf')
+                except Exception as e:
+                    logger.warning(f"Error calculating perplexity at step {current_step}: {e}")
         else:
-            logger.debug(f"trainer.loss not available at step {step}.")
+            logger.debug(f"WandBCallback.post_step: trainer.loss not available at step {current_step}.")
 
 
-        # Get learning rate directly from trainer's optimizer
+        # Log learning rate
         if hasattr(self.trainer, 'optimizer') and \
            hasattr(self.trainer.optimizer, 'param_groups') and \
            self.trainer.optimizer.param_groups:
-            metrics["train/learning_rate"] = self.trainer.optimizer.param_groups[0]['lr']
+            metrics_to_log["train/learning_rate"] = self.trainer.optimizer.param_groups[0]['lr']
         else:
-            logger.debug(f"trainer.optimizer.param_groups not available for LR at step {step}.")
+            logger.debug(f"WandBCallback.post_step: Learning rate not available at step {current_step}.")
 
-        # Log other stats from self.trainer.stats (if any)
-        # These might include validation metrics if the trainer populates them here,
-        # or other custom training stats.
-        if hasattr(self.trainer, 'stats') and isinstance(self.trainer.stats, dict) and step in self.trainer.stats:
-            for name, value in self.trainer.stats[step].items():
-                # Avoid overwriting loss/lr if already sourced more directly, unless names are different
-                metric_name = f"trainer_stats/{name}" # Prefix to avoid collision
-                if isinstance(value, torch.Tensor):
-                    try:
-                        metrics[metric_name] = value.item()
-                    except ValueError: # if tensor is not a scalar
-                        logger.debug(f"Cannot convert tensor '{metric_name}' to scalar at step {step}.")
-                    except Exception as e:
-                        logger.warning(f"Error itemizing tensor '{metric_name}' at step {step}: {e}")
-                elif isinstance(value, (int, float)):
-                    metrics[metric_name] = value
-                # else: log a warning or skip if type is not plottable
-
-        # Log additional metrics from self.trainer.metrics (a general dict for metrics)
-        if hasattr(self.trainer, 'metrics') and isinstance(self.trainer.metrics, dict):
-            for name, value in self.trainer.metrics.items():
-                metric_name = f"trainer_metrics/{name}" # Prefix
-                if isinstance(value, torch.Tensor):
-                    try:
-                        metrics[metric_name] = value.item()
-                    except ValueError:
-                        logger.debug(f"Cannot convert tensor '{metric_name}' from trainer.metrics to scalar at step {step}.")
-                    except Exception as e:
-                        logger.warning(f"Error itemizing tensor '{metric_name}' from trainer.metrics at step {step}: {e}")
-                elif isinstance(value, (int, float)):
-                    metrics[metric_name] = value
-
-        # Log to wandb if there are any metrics collected
-        if metrics: # Check if metrics dict is not empty
+        # Log metrics if any were collected
+        if metrics_to_log: # Only log if there's something to log
             try:
-                wandb.log(metrics, step=step)
+                # Log with explicit step, which is best practice
+                wandb.log(metrics_to_log, step=current_step)
             except Exception as e:
-                logger.error(f"Failed to log metrics to wandb at step {step}: {e}. Metrics: {metrics}")
+                logger.error(
+                    f"WandBCallback.post_step: Failed to log metrics to wandb at step {current_step}: {e}. "
+                    f"Metrics: {metrics_to_log}",
+                    exc_info=True
+                )
         else:
-            logger.debug(f"No metrics collected to log at step {step}.")
-
+            logger.debug(f"WandBCallback.post_step: No metrics to log at step {current_step}.")
 
     def post_train(self):
         """Finalize WandB run after training."""
-        if not self.wandb_initialized_by_this_callback or (is_distributed() and get_rank() != 0) or wandb.run is None:
+        if not self.wandb_initialized_this_instance or (is_distributed() and get_rank() != 0) or wandb.run is None:
+            # Log if an expected finish is not happening
+            if self.wandb_initialized_this_instance and get_rank() == 0 and wandb.run is None:
+                 logger.warning("WandBCallback.post_train: wandb.run is None, but instance was initialized. "
+                                "Run may have been finished externally or failed to initialize properly.")
             return
 
-        logger.info(f"Finishing WandB run (ID: {wandb.run.id}, Name: {wandb.run.name}) in post_train.")
-        wandb.finish()
-        self.wandb_initialized_by_this_callback = False # Reset for potential re-use if trainer is run multiple times in one script
-        self.run = None
+        logger.info(
+            f"WandBCallback.post_train: Finishing WandB run "
+            f"(ID: {wandb.run.id}, Name: {wandb.run.name})."
+        )
+        try:
+            wandb.finish()
+        except Exception as e:
+            logger.error(f"Error during wandb.finish() in WandBCallback.post_train: {e}", exc_info=True)
+        
+        # Reset flag in case the callback instance is re-used in the same Python process
+        self.wandb_initialized_this_instance = False
 
 # class WandBCallback(Callback):
 #     """
