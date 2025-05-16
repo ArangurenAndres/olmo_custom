@@ -385,7 +385,7 @@ class WandBCallback(Callback):
         # Method 1: Try to extract metrics from console_logger callback
         # This is more reliable than trying to access trainer.stats directly
         console_logger = None
-        for callback_name, callback in self.trainer._callbacks.items():
+        for callback_name, callback in self.trainer.callbacks.items():
             if 'console_logger' in callback_name:
                 console_logger = callback
                 break
