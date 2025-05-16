@@ -1,6 +1,7 @@
 import torch
 from transformers import AutoTokenizer
 from olmo_core.train.callbacks import Callback
+import wandb
 
 class InferenceCallback(Callback):
     def __init__(self, model, tokenizer_config, prompt, interval):
@@ -26,9 +27,12 @@ class InferenceCallback(Callback):
         with torch.no_grad():
             logits = self.model(input_tensor)
             for _ in range(50):
-                logits = logits[0, -1, :] / 0.8
-                logits[0] = -float("inf")
-                probs = torch.nn.functional.softmax(logits, dim=-1)
+                next_token_logits = logits[0, -1, :]
+                next_token_logits = next_token_logits / 0.8
+                if next_token_logits.size(0) > 0:
+                    next_token_logits[0] = -float("inf")
+
+                probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
                 token = torch.multinomial(probs, 1).item()
                 if token == self.tokenizer_config.eos_token_id:
                     break
@@ -36,6 +40,13 @@ class InferenceCallback(Callback):
                 input_tensor = torch.tensor([generated], device=self.model.device)
                 logits = self.model(input_tensor)
 
-        decoded = self.tokenizer.decode(generated)
-        print(f"[Step {step}] Generated: {decoded}")
+        decoded_text = self.tokenizer.decode(generated)
+        print(f"[Step {step}] Generated: {decoded_text}")
+
+        if wandb.run is not None:
+            wandb.log({
+                "inference/generated_text": wandb.Html(f"<p>{decoded_text}</p>"),
+                "inference/generated_length": len(generated) - len(tokens)
+            }, step=step)
+
         self.model.train()

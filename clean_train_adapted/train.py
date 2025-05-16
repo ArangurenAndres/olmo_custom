@@ -33,7 +33,7 @@ from olmo_core.train.trainer import Trainer
 from olmo_core.utils import seed_all
 from utils.dataloader import prepare_data
 from utils.inference import InferenceCallback
-from olmo_core.train.callbacks import Callback, WandBCallback
+from olmo_core.train.callbacks import Callback, WandBCallback, DownstreamEvaluatorCallbackConfig
 from olmo_core.data import TokenizerConfig
 from utils.setup_env_variables import setup_environment
 
@@ -76,7 +76,7 @@ def main():
     if device.type == "cuda":
         torch.cuda.set_device(0)      
         # Disable synchronization debug mode - usually appears when inference is called - relates to efficiency
-        torch.cuda.set_sync_debug_mode(False) 
+        torch.cuda.set_sync_debug_mode(0) 
         print(f"Running on CUDA device: {torch.cuda.current_device()} (set explicitly to index 0)") # Optional: confirmation
     else:
         print("Running on CPU")
@@ -119,15 +119,16 @@ def main():
 
     
     # Initialize wandb and callback
-    #wandb.init(
-       # project=config["wandb_project"],
-      #  name=f"{config['wandb_name']}-{timestamp}",
-     #   config=config
-    #)
+    wandb.init(
+        project=config["wandb_project"],
+        name=f"{config['wandb_name']}-{timestamp}",
+        config=config
+    )
 
+    # TO DO: put all callbacks in utils/callbacks.py
     wandb_cb = WandBCallback(
         project=config["wandb_project"],
-        name=config["wandb_name"],
+        name=f"{config['wandb_name']}-{timestamp}",
         entity=None,
         enabled=True,
         cancel_check_interval=10,
@@ -137,25 +138,35 @@ def main():
         model=model,
         tokenizer_config=tokenizer_config,
         prompt=config["inference_prompt"],
-        interval=config["inference_interval"]
+        interval=config["steps"]/config["inference_times"]
     )
 
-    # Configure checkpointer with the desired save interval
-    checkpointer_cfg = CheckpointerConfig(
-        save_interval=Duration.steps(config["save_interval_steps"])
+    # Evaluation tasks CallBack
+    # TODO: Consider moving task list, eval_interval, and eval_duration to config.yaml
+    downstream_eval_tasks = ["boolq", "piqa", "arc_easy"]  # would probably be fixed for the whole project
+    # each task has usually 1000 validation examples
+    downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
+        tasks=downstream_eval_tasks,
+        tokenizer=tokenizer_config, 
+        eval_interval=config["steps"]/config["evaluation_times"],  # evaluate once at the end
+        eval_on_startup=True, # run evaluation at the beginning as baseline
+        log_interval=5,      # log progress every 20 eval batches
+        enabled=True
     )
+
+    
 
     trainer_config = TrainerConfig(
         save_folder=save_dir,
         save_overwrite=True,
         work_dir=work_dir,
-        checkpointer=checkpointer_cfg,
         metrics_collect_interval=1,
         cancel_check_interval=5,
         max_duration=Duration.steps(config["steps"]),
         device=str(device),
     ).with_callback("wandb", wandb_cb
-    ).with_callback("inference", inference_cb)
+    ).with_callback("inference", inference_cb
+    ).with_callback("downstream_eval", downstream_eval_cb_config)
     
 
     trainer = trainer_config.build(train_module=train_module, data_loader=data_loader)
