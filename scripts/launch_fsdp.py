@@ -58,6 +58,13 @@ def parse_args():
         default="nccl", 
         help="Distributed backend"
     )
+
+    parser.add_argument(
+        "--local-rank",
+        type=int,
+        default=-1, 
+        help="Local rank passed by torch.distributed.launch"
+    )
     
     # Model and training configuration
     parser.add_argument(
@@ -139,8 +146,9 @@ def build_torch_distributed_launch_command(args):
     if not args.no_python:
         cmd.append(sys.executable)
     
+    # With:
     cmd.extend([
-        "-m", "torch.distributed.launch",
+        "-m", "torch.distributed.run",
         f"--nproc_per_node={args.gpus_per_node}",
         f"--nnodes={args.nodes}",
         f"--node_rank={args.node_rank}",
