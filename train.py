@@ -21,6 +21,7 @@ from olmo_core.distributed.utils import (
     barrier
 )
 from olmo_core.utils import seed_all
+from olmo_core.train.callbacks import DownstreamEvaluatorCallbackConfig
 
 # Import from project modules
 from src.data import (
@@ -361,6 +362,20 @@ def main():
             log_to_file=os.path.join(log_dir, "generations.txt")
         )
         callbacks.append(inference_callback)
+
+        # Evaluation tasks CallBack
+    # TODO: Consider moving task list, eval_interval, and eval_duration to config.yaml
+    downstream_eval_tasks = ["boolq", "piqa", "arc_easy"]  # would probably be fixed for the whole project
+    # each task has usually 1000 validation examples
+    downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
+        tasks=downstream_eval_tasks,
+        tokenizer=tokenizer_config, 
+        eval_interval=config["steps"]/config["evaluation_times"],  # evaluate once at the end
+        eval_on_startup=True, # run evaluation at the beginning as baseline
+        log_interval=5,      # log progress every 20 eval batches
+        enabled=True
+    )
+    callbacks.append(downstream_eval_cb_config)
     
     # Update configuration for training
     train_config = config.copy()
