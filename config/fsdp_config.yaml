@@ -2,7 +2,7 @@
 
 # FSDP configuration
 mixed_precision: true              # Whether to use mixed precision
-shard_strategy: "FULL_SHARD"       # Sharding strategy (FULL_SHARD, SHARD_GRAD_OP, or NO_SHARD)
+shard_strategy: "SHARD_GRAD_OP"       # Sharding strategy (FULL_SHARD, SHARD_GRAD_OP, or NO_SHARD)
 cpu_offload: false                 # Whether to offload parameters to CPU
 backward_prefetch: true            # Whether to prefetch gradients for backward pass
 min_shard_size: 1024000            # Minimum shard size in bytes
