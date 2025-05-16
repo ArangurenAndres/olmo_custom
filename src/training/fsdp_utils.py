@@ -104,7 +104,7 @@ def get_transformer_wrap_policy():
         auto_wrap_policy for FSDP
     """
     # Define a custom policy function that matches PyTorch's expected signature
-    def custom_auto_wrap_policy(module, recurse, unwrapped_params):
+    def custom_auto_wrap_policy(module, recurse, nonwrapped_numel):
         return isinstance(module, TransformerBlock)
     
     return custom_auto_wrap_policy
