@@ -391,14 +391,42 @@ class WandBCallback(Callback):
                 break
                 
         if console_logger is not None and hasattr(console_logger, 'metrics'):
-            for name, value in console_logger.metrics.items():
-                if isinstance(value, torch.Tensor):
-                    try:
-                        metrics[name] = value.item()
-                    except:
-                        pass
-                elif isinstance(value, (int, float)):
-                    metrics[name] = value
+            # Handle metrics differently based on type
+            if isinstance(console_logger.metrics, dict):
+                # Handle dictionary-style metrics (key-value pairs)
+                for name, value in console_logger.metrics.items():
+                    if isinstance(value, torch.Tensor):
+                        try:
+                            metrics[name] = value.item()
+                        except:
+                            pass
+                    elif isinstance(value, (int, float)):
+                        metrics[name] = value
+            elif isinstance(console_logger.metrics, list):
+                # Handle list-style metrics
+                for i, metric in enumerate(console_logger.metrics):
+                    if isinstance(metric, dict) and 'key' in metric and 'value' in metric:
+                        # If it's a list of dicts with key-value pairs
+                        name = metric['key']
+                        value = metric['value']
+                        if isinstance(value, torch.Tensor):
+                            try:
+                                metrics[name] = value.item()
+                            except:
+                                pass
+                        elif isinstance(value, (int, float)):
+                            metrics[name] = value
+                    elif hasattr(metric, 'name') and hasattr(metric, 'value'):
+                        # If it's a list of objects with name and value attributes
+                        name = metric.name
+                        value = metric.value
+                        if isinstance(value, torch.Tensor):
+                            try:
+                                metrics[name] = value.item()
+                            except:
+                                pass
+                        elif isinstance(value, (int, float)):
+                            metrics[name] = value
         
         # Method 2: Directly get loss from train_module
         try:
