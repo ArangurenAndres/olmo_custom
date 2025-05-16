@@ -172,7 +172,18 @@ class InferenceCallback(Callback):
             
             # Log to wandb if available
             if WANDB_AVAILABLE and wandb.run is not None:
-                wandb.log({"generated_text": generated_text, "step": step})
+                # Log as wandb.Text object for proper formatting
+                if hasattr(wandb, 'Text'):
+                    wandb.log({
+                        "generated_text": wandb.Text(generated_text), 
+                        "step": step
+                    })
+                else:
+                    # Fallback to simple string for older wandb versions
+                    wandb.log({
+                        "generated_text": generated_text, 
+                        "step": step
+                    })
                 
         except Exception as e:
             logger.error(f"Error during inference: {e}")
@@ -312,9 +323,13 @@ class WandBCallback(Callback):
         self.config = config or {}
         self.initialized = False
         
-        # Set default metrics to track
+        # Expanded list of metrics to track from OLMo trainer
         self.tracked_metrics = [
-            "loss"
+            "train/CE loss",
+            "train/PPL",
+            "throughput/device/TPS",
+            "throughput/device/BPS",
+            "throughput/total tokens"
         ]
     
     def pre_train(self):
@@ -323,9 +338,14 @@ class WandBCallback(Callback):
         if is_distributed() and get_rank() != 0:
             return
             
-        # Initialize wandb
+        # Initialize wandb with a fresh run
         if not self.initialized:
-            wandb.init(project=self.project_name, config=self.config)
+            # Terminate any existing run
+            if wandb.run is not None:
+                wandb.finish()
+                
+            # Start a new run
+            wandb.init(project=self.project_name, config=self.config, reinit=True)
             self.initialized = True
             
             # Log model details if available
@@ -341,51 +361,43 @@ class WandBCallback(Callback):
         if not self.initialized or (is_distributed() and get_rank() != 0):
             return
             
-        # Extract and log metrics
+        # Create metrics dict
         metrics = {}
         
-        # FIXED: Direct approach to get loss from train_module
+        # First, extract standard metrics from OLMo's stats
+        if hasattr(self.trainer, 'stats') and isinstance(self.trainer.stats, dict):
+            for step, step_stats in self.trainer.stats.items():
+                if step == self.trainer.global_step:
+                    for metric_name, value in step_stats.items():
+                        # Convert tensor values to Python scalars
+                        if isinstance(value, torch.Tensor):
+                            try:
+                                metrics[metric_name] = value.item()
+                            except:
+                                # Skip metrics that can't be converted
+                                pass
+                        elif isinstance(value, (int, float)):
+                            metrics[metric_name] = value
+        
+        # Get loss directly from train_module (most reliable source)
         try:
-            # The most reliable way to get loss from OLMo's trainer
-            train_module = self.trainer.train_module
-            if hasattr(train_module, 'loss'):
-                loss = train_module.loss
-                # Ensure loss is a Python primitive, not a tensor
+            if hasattr(self.trainer.train_module, 'loss'):
+                loss = self.trainer.train_module.loss
                 if isinstance(loss, torch.Tensor):
-                    metrics["loss"] = loss.item()
+                    loss_value = loss.item()
                 else:
-                    metrics["loss"] = float(loss)
+                    loss_value = float(loss)
+                    
+                # Add standalone loss metric (for charts that expect "loss")
+                metrics["loss"] = loss_value
                 
-                # Also calculate and log perplexity
-                if metrics["loss"] > 0:
-                    metrics["perplexity"] = torch.exp(torch.tensor(metrics["loss"])).item()
+                # Calculate perplexity
+                if loss_value > 0:
+                    metrics["perplexity"] = float(torch.exp(torch.tensor(loss_value)).item())
         except Exception as e:
             logger.warning(f"Could not extract loss from train_module: {e}")
-            
-            # Fallbacks - try other known locations
-            try:
-                if hasattr(self.trainer, 'train_state') and hasattr(self.trainer.train_state, 'loss'):
-                    loss = self.trainer.train_state.loss
-                    if isinstance(loss, torch.Tensor):
-                        metrics["loss"] = loss.item()
-                    else:
-                        metrics["loss"] = float(loss)
-            except Exception:
-                pass
-            
-            try:
-                # Check metrics dict directly
-                if hasattr(self.trainer, 'metrics') and isinstance(self.trainer.metrics, dict):
-                    for key, value in self.trainer.metrics.items():
-                        if "loss" in key.lower():
-                            if isinstance(value, torch.Tensor):
-                                metrics[key] = value.item()
-                            else:
-                                metrics[key] = float(value)
-            except Exception:
-                pass
-            
-        # Log learning rate
+        
+        # Add learning rate
         try:
             optimizer = getattr(self.trainer.train_module, 'optimizer', None)
             if optimizer and hasattr(optimizer, 'param_groups'):
@@ -393,27 +405,15 @@ class WandBCallback(Callback):
         except Exception as e:
             logger.warning(f"Could not extract learning rate: {e}")
         
-        # Log step
+        # Always include step number
         metrics["step"] = self.trainer.global_step
         
-        # Add any other metrics from trainer stats if available 
-        try:
-            if hasattr(self.trainer, 'stats') and isinstance(self.trainer.stats, dict):
-                for k, v in self.trainer.stats.items():
-                    if isinstance(v, (int, float)) or (isinstance(v, torch.Tensor) and v.numel() == 1):
-                        if isinstance(v, torch.Tensor):
-                            metrics[k] = v.item()
-                        else:
-                            metrics[k] = v
-        except Exception as e:
-            logger.warning(f"Could not extract additional metrics from trainer.stats: {e}")
-        
-        # Debug log what we're sending to wandb
+        # Debug log
         if metrics:
-            logger.debug(f"Logging metrics to wandb: {metrics}")
+            logger.debug(f"WandB metrics: {metrics}")
             wandb.log(metrics)
         else:
-            logger.warning("No metrics found to log to wandb")
+            logger.warning("No metrics found to log to WandB")
     
     def post_train(self):
         """Finalize WandB run after training."""
