@@ -189,15 +189,7 @@ class CheckpointCallback(Callback):
         save_optimizer: bool = True,
         keep_last_k: int = 3
     ):
-        """
-        Initialize the checkpoint callback.
-        
-        Args:
-            save_dir: Directory to save checkpoints
-            interval: How often to save checkpoints (in steps)
-            save_optimizer: Whether to save optimizer state
-            keep_last_k: Keep only the last k checkpoints
-        """
+        """Initialize the checkpoint callback."""
         self.save_dir = save_dir
         self.interval = interval
         self.save_optimizer = save_optimizer
@@ -207,18 +199,17 @@ class CheckpointCallback(Callback):
         # Create directory if it doesn't exist
         os.makedirs(save_dir, exist_ok=True)
     
-    def post_step(self, trainer):
+    def post_step(self):  # Remove the trainer parameter
         """Save checkpoints periodically during training."""
-        step = trainer.global_step
+        step = self.trainer.global_step
         if step % self.interval == 0 and step > 0:
-            self.save_checkpoint(trainer, step)
+            self.save_checkpoint(step)
     
-    def save_checkpoint(self, trainer, step: int):
+    def save_checkpoint(self, step: int):  # Updated to only take step
         """
         Save a checkpoint of the model and optimizer.
         
         Args:
-            trainer: OLMo trainer
             step: Current training step
         """
         # Synchronize processes in distributed setting
@@ -235,13 +226,19 @@ class CheckpointCallback(Callback):
         # Create checkpoint dictionary
         checkpoint = {
             'step': step,
-            'model_state_dict': trainer.train_module.model.state_dict(),
-            'loss': trainer.train_state.loss
+            'model_state_dict': self.trainer.train_module.model.state_dict(),
         }
         
+        # Add loss if available
+        try:
+            if hasattr(self.trainer, 'train_state') and hasattr(self.trainer.train_state, 'loss'):
+                checkpoint['loss'] = self.trainer.train_state.loss
+        except Exception as e:
+            logger.warning(f"Could not save loss in checkpoint: {e}")
+        
         # Add optimizer state if requested
-        if self.save_optimizer and hasattr(trainer, 'optimizer'):
-            checkpoint['optimizer_state_dict'] = trainer.optimizer.state_dict()
+        if self.save_optimizer and hasattr(self.trainer, 'optimizer'):
+            checkpoint['optimizer_state_dict'] = self.trainer.optimizer.state_dict()
         
         # Save checkpoint
         try:
@@ -261,9 +258,9 @@ class CheckpointCallback(Callback):
         except Exception as e:
             logger.error(f"Error saving checkpoint: {e}")
     
-    def post_train(self, trainer):
+    def post_train(self):  # Remove the trainer parameter
         """Save final checkpoint after training."""
-        step = trainer.global_step
+        step = self.trainer.global_step
         
         # Save with special name to indicate it's the final checkpoint
         if is_distributed() and get_rank() != 0:
@@ -274,13 +271,19 @@ class CheckpointCallback(Callback):
         # Create checkpoint dictionary
         checkpoint = {
             'step': step,
-            'model_state_dict': trainer.train_module.model.state_dict(),
-            'loss': trainer.train_state.loss
+            'model_state_dict': self.trainer.train_module.model.state_dict(),
         }
         
+        # Add loss if available
+        try:
+            if hasattr(self.trainer, 'train_state') and hasattr(self.trainer.train_state, 'loss'):
+                checkpoint['loss'] = self.trainer.train_state.loss
+        except Exception as e:
+            logger.warning(f"Could not save loss in final checkpoint: {e}")
+        
         # Add optimizer state if requested
-        if self.save_optimizer and hasattr(trainer, 'optimizer'):
-            checkpoint['optimizer_state_dict'] = trainer.optimizer.state_dict()
+        if self.save_optimizer and hasattr(self.trainer, 'optimizer'):
+            checkpoint['optimizer_state_dict'] = self.trainer.optimizer.state_dict()
         
         # Save checkpoint
         try:
