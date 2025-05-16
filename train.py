@@ -189,6 +189,9 @@ def merge_configs(base_config, fsdp_config=None, args=None):
 def main():
     """Main entry point."""
     args = parse_args()
+
+    # Disable tokenizers parallelism to avoid warnings
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
     
     # Load configurations
     try:
