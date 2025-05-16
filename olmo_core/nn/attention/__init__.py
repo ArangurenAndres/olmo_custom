@@ -236,43 +236,72 @@ class Attention(AttentionBase):
         cache: Optional[BufferCache] = None,
     ):
         super().__init__()
-        
-        # Standard attention configuration
-        self.n_heads = n_heads
-        self.n_kv_heads = n_kv_heads or n_heads
-        self.n_rep = self.n_heads // self.n_kv_heads
-        self.head_dim = d_model // n_heads
-        
-        # What could work, is that we only allow n_heads to be even, and then we can ensure that
-        # head_dim is even as well. This would be a bit more efficient.
-        # Verify head_dim is even for RoPE compatibility
-        if self.head_dim % 2 != 0:
-            raise ValueError(
-                f"head_dim ({self.head_dim}) must be even for RoPE compatibility. "
-                f"Please ensure d_model ({d_model}) is divisible by n_heads * 2 ({n_heads * 2})."
-        )
+        # TODO: This needs to change....
 
-        # Create projection matrices with proper dimensions
-        self.w_q = nn.Linear(d_model, self.n_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device)
+        with open("./config.yaml", "r") as f:
+            import yaml
+            yaml_object = yaml.safe_load(f)
+
+        global_dim = yaml_object["global_dim"]
+        head_dim = yaml_object["head_dim"]
+
+        # global_dim = 768 # TODO: this should be in an env file shomewhere if possible
+        # # n_heads =
+        # head_dim = 64 #128
+
+        # breakpoint()
+        # TODO: n_heads will be the replaced by scaled dimensionality
+
+        # TODO: make n_kv_heads work similary to number of groups instead
+
+        self.n_heads = n_heads // head_dim
+
+        # n_groups
+
+        self.n_kv_heads = n_kv_heads or self.n_heads # TODO: can this stay? dont think so, it probably also needs a change
+        # breakpoint()
+        # TODO: here we assume n_kv_heads is given as the the nuber of query groups
+        if n_kv_heads is None:
+            self.n_kv_heads = self.n_heads
+        else:
+            self.n_kv_heads = self.n_heads // n_kv_heads
+
+        self.n_rep = self.n_heads // self.n_kv_heads
+        self.head_dim = head_dim # TODO: make sure this is divisible
+
+        # self.n_heads = n_heads
+        # self.n_kv_heads = n_kv_heads or n_heads
+        # self.n_rep = self.n_heads // self.n_kv_heads
+        # self.head_dim = d_model // n_heads # TODO: make sure this is divisible
+        # breakpoint()
+
+        # print("--------")
+        # print(self.n_heads)
+        # print(self.n_kv_heads)
+
+        self.w_q = nn.Linear(global_dim, n_heads, bias=bias, dtype=dtype, device=init_device)
+
         self.w_k = nn.Linear(
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
         self.w_v = nn.Linear(
             d_model, self.n_kv_heads * self.head_dim, bias=bias, dtype=dtype, device=init_device
         )
-        self.w_out = nn.Linear(self.n_heads * self.head_dim, d_model, bias=bias, dtype=dtype, device=init_device)
-        
-        # Rest of initialization remains the same
+
+        self.w_out = nn.Linear(n_heads, global_dim, bias=bias, dtype=dtype, device=init_device)
+
         self.clip_qkv = clip_qkv
         self.dropout_p = dropout
-        
+
         self.q_norm: Optional[LayerNorm] = None
         self.k_norm: Optional[LayerNorm] = None
         if qk_norm is not None:
-            self.q_norm = qk_norm.build(size=self.n_heads * self.head_dim, init_device=init_device)
-            self.k_norm = qk_norm.build(size=self.n_kv_heads * self.head_dim, init_device=init_device)
-        
-        # Initialize RoPE if configured
+            # self.q_norm = qk_norm.build(size=d_model, init_device=init_device)
+            self.q_norm = qk_norm.build(size=n_heads, init_device=init_device)
+            self.k_norm = qk_norm.build(
+                size=self.n_kv_heads * self.head_dim, init_device=init_device
+            )
+
         self.rope: Optional[Union[RotaryEmbedding, ComplexRotaryEmbedding]] = None
         if rope is not None:
             if rope.name == "fused":
@@ -282,7 +311,7 @@ class Attention(AttentionBase):
             rope_class = rope.build(self.head_dim, cache=cache)
             assert isinstance(rope_class, (RotaryEmbedding, ComplexRotaryEmbedding))
             self.rope = rope_class
-        
+
         self.use_flash = use_flash
         self._cp_pg: Optional[dist.ProcessGroup] = None
         self._cp_enabled = False
@@ -373,11 +402,16 @@ class Attention(AttentionBase):
             #        (batch_size, n_kv_heads, seq_len, head_dim),
             #        (batch_size, n_kv_heads, seq_len, head_dim)
             q, k, v = q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)
-
+            q1 = q
+            # breakpoint()
             # shape: (batch_size, n_heads, seq_len, head_dim)
+            # try:
             att = F.scaled_dot_product_attention(
                 q, k, v, dropout_p=self.dropout_p, is_causal=True, scale=scale
             )
+            # print("attention passed")
+            # except Exception as e:
+            #     breakpoint()
 
             # shape: (batch_size, seq_len, n_heads, head_dim)
             att = att.transpose(1, 2).contiguous()

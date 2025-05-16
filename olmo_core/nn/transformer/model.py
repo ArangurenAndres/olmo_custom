@@ -144,6 +144,14 @@ class Transformer(nn.Module):
         init_head = block.attention.n_heads
         print(init_head)
 
+
+        if block.attention.n_kv_heads is None:
+            n_query_groups = None
+            head_multiple_of = 2
+        else:
+            n_query_groups = block.attention.n_heads // block.attention.n_kv_heads
+            head_multiple_of = n_query_groups
+
         #TODO: this is a problem, we'll need to change the defintion of the attention layer
         # Cuz now we get more heads, but the dimensionlity will not change, so we just get more small heads...
         n_heads_layer = [int(self.make_divisible(init_head * m, head_multiple_of)) for m in qvk_multiplies]
@@ -155,10 +163,8 @@ class Transformer(nn.Module):
         # TODO: check this
         # block.attention.n_kv_heads = 2
 
-        if block.attention.n_kv_heads is None:
-            n_query_groups = None
-        else:
-            n_query_groups = block.attention.n_heads // block.attention.n_kv_heads
+
+        # head_multiple_of = 2
 
         block.attention.n_kv_heads = n_query_groups
         # n_query_groups = self.d_model //
@@ -180,6 +186,7 @@ class Transformer(nn.Module):
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
+        # breakpoint()
 
         self.init_device = init_device
         self.init_method = InitMethod(init_method)
