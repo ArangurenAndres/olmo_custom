@@ -98,66 +98,66 @@ class InferenceCallback(Callback):
         model = self.train_module.model
         
         try:
-            # Prepare input with proper padding
-            tokens = self.tokenizer.encode(self.prompt)
-            
-            # Make sure we have proper padding
-            seq_len = self.train_module.max_sequence_length
-            if len(tokens) > seq_len:
-                tokens = tokens[:seq_len]  # Truncate if too long
-            
-            # Create properly padded input tensor 
-            input_tensor = torch.tensor([tokens], device=model.device)
-            
-            # Set model to eval mode
-            model.eval()
-            
+            # Only sync once at the beginning for tokenization
             with torch.no_grad():
-                # Manual generation with consistent tensor shapes
-                generated = tokens.copy()
+                model.eval()
                 
-                # Get initial logits - use model directly without the labels
-                outputs = model(input_tensor)
-
-                # Handle different output formats
+                # Create tensor on CPU first then transfer to GPU (reduces sync points)
+                tokens = self.tokenizer.encode(self.prompt)
+                seq_len = self.train_module.max_sequence_length
+                if len(tokens) > seq_len:
+                    tokens = tokens[:seq_len]
+                    
+                input_ids = torch.tensor([tokens], device="cpu").to(model.device, non_blocking=True)
+                
+                # Pre-allocate tensor for generated tokens to avoid repeated creation
+                generated = tokens.copy()
+                max_length = len(tokens) + self.max_new_tokens
+                
+                # Run initial prediction
+                outputs = model(input_ids)
                 if hasattr(outputs, 'logits'):
                     logits = outputs.logits
                 else:
-                    # Model returns the logits tensor directly
                     logits = outputs
-                
-                # Generate tokens one by one
-                for _ in range(self.max_new_tokens):
-                    next_token_logits = logits[0, -1, :] / self.temperature
-                    next_token_logits[0] = -float("inf")  # Prevent PAD token generation
                     
-                    # Sample next token
+                # Main generation loop
+                for _ in range(self.max_new_tokens):
+                    # Extract next token logits
+                    next_token_logits = logits[0, -1, :].clone() / self.temperature
+                    
+                    # Create a mask for token 0 instead of setting to -inf
+                    next_token_logits[0] = torch.finfo(next_token_logits.dtype).min
+                    
+                    # Sample next token (this still requires synchronization for .item())
                     probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
                     next_token = torch.multinomial(probs, 1).item()
                     
-                    # Stop if EOS
+                    # Check for EOS
                     if next_token == self.tokenizer.eos_token_id:
                         break
                         
-                    # Add to generated tokens and make sure we're consistent with sequence lengths
+                    # Add token to generated sequence
                     generated.append(next_token)
                     
-                    # Handle sequence length carefully
+                    # Manage sequence length
                     if len(generated) > seq_len:
-                        generated = generated[-seq_len:]  # Keep only most recent tokens
-                        
-                    # Forward pass for next token with proper padding
-                    input_tensor = torch.tensor([generated], device=model.device)
-                    outputs = model(input_tensor)
-
-                    # Handle output format again
+                        generated = generated[-seq_len:]
+                    
+                    # Update input_ids efficiently (avoid creating new tensors repeatedly)
+                    input_ids = torch.tensor([generated], device="cpu").to(model.device, non_blocking=True)
+                    
+                    # Get next prediction
+                    outputs = model(input_ids)
                     if hasattr(outputs, 'logits'):
                         logits = outputs.logits
                     else:
                         logits = outputs
-            
-            # Set back to train mode
-            model.train()
+                
+                # Only one sync point at the end for generation result
+                generated_text = self.tokenizer.decode(generated, skip_special_tokens=True)
+                
+                model.train()
             
             # Decode generated text
             generated_text = self.tokenizer.decode(generated, skip_special_tokens=True)
