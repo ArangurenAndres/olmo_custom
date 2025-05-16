@@ -289,22 +289,39 @@ def main():
             verbose=config.get("verbose_scaling", False)
         )
     
-    # Wrap model with FSDP if needed
-    if args.use_fsdp:
-        logger.info("Wrapping model with FSDP")
-        model = wrap_model_with_fsdp(
-            model=model,
-            mixed_precision=config.get("mixed_precision", True),
-            shard_strategy=config.get("fsdp", {}).get("shard_strategy", "FULL_SHARD"),
-            cpu_offload=config.get("fsdp", {}).get("cpu_offload", False)
-        )
-    
     # Build training module
     train_module = build_train_module(
         model=model,
         config=config,
         device=device
     )
+
+       # Wrap train_module with FSDP if needed
+    if args.use_fsdp:
+        logger.info("Wrapping train_module with FSDP")
+        # Store the original model reference
+        unwrapped_model = train_module.model
+        
+        # Wrap the model with FSDP
+        fsdp_model = wrap_model_with_fsdp(
+            model=unwrapped_model,
+            mixed_precision=config.get("mixed_precision", True),
+            shard_strategy=config.get("fsdp", {}).get("shard_strategy", "FULL_SHARD"),
+            cpu_offload=config.get("fsdp", {}).get("cpu_offload", False)
+        )
+        
+        # Replace the model in the train module
+        train_module.model = fsdp_model 
+
+    #     # Wrap model with FSDP if needed
+    # if args.use_fsdp:
+    #     logger.info("Wrapping model with FSDP")
+    #     model = wrap_model_with_fsdp(
+    #         model=model,
+    #         mixed_precision=config.get("mixed_precision", True),
+    #         shard_strategy=config.get("fsdp", {}).get("shard_strategy", "FULL_SHARD"),
+    #         cpu_offload=config.get("fsdp", {}).get("cpu_offload", False)
+    #     )
     
     # Add after building train_module
     if args.checkpoint and os.path.exists(args.checkpoint):
