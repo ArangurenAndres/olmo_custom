@@ -303,7 +303,7 @@ class CheckpointCallback(Callback):
 
 class WandBCallback(Callback):
     """
-    Simple and robust Weights & Biases integration for OLMo training.
+    Weights & Biases integration for experiment tracking.
     """
     
     def __init__(
@@ -311,7 +311,9 @@ class WandBCallback(Callback):
         project_name: str = "olmo_training",
         config: Optional[Dict[str, Any]] = None
     ):
-        """Initialize the WandB callback."""
+        """
+        Initialize the WandB callback.
+        """
         if not WANDB_AVAILABLE:
             raise ImportError("wandb is required for WandBCallback")
         
@@ -328,11 +330,11 @@ class WandBCallback(Callback):
         if wandb.run is not None:
             wandb.finish()
             
-        # Simple initialization that works reliably
+        # Start a new wandb run
         wandb.init(project=self.project_name, config=self.config)
         self.initialized = True
         
-        # Log model info
+        # Log model details
         if hasattr(self.trainer, 'train_module') and hasattr(self.trainer.train_module, 'model'):
             model = self.trainer.train_module.model
             params_info = {
@@ -350,46 +352,63 @@ class WandBCallback(Callback):
         step = self.trainer.global_step
         
         # Initialize metrics dictionary
-        metrics = {}
+        metrics = {
+            "step": step
+        }
         
-        # Get metrics from stats - this is the most reliable source
-        if hasattr(self.trainer, 'stats') and step in self.trainer.stats:
-            for name, value in self.trainer.stats[step].items():
-                # Convert tensor to Python scalar
-                if isinstance(value, torch.Tensor):
-                    try:
-                        metrics[name] = value.item()
-                    except:
-                        pass
-                elif isinstance(value, (int, float)):
-                    metrics[name] = value
+        # Try to get loss from train_module
+        if hasattr(self.trainer, 'train_module'):
+            train_module = self.trainer.train_module
+            
+            # Get loss
+            if hasattr(train_module, 'loss'):
+                loss = train_module.loss
+                if isinstance(loss, torch.Tensor):
+                    metrics["loss"] = loss.item()
+                else:
+                    metrics["loss"] = float(loss)
+                    
+                # Calculate perplexity
+                if metrics["loss"] > 0:
+                    metrics["perplexity"] = math.exp(metrics["loss"])
+            
+            # Get learning rate
+            if hasattr(train_module, 'optimizer') and hasattr(train_module.optimizer, 'param_groups'):
+                metrics["learning_rate"] = train_module.optimizer.param_groups[0]['lr']
         
-        # Get loss directly - fallback method
-        if "loss" not in metrics and hasattr(self.trainer.train_module, 'loss'):
-            loss = self.trainer.train_module.loss
-            if isinstance(loss, torch.Tensor):
-                metrics["training/loss"] = loss.item()
-            else:
-                metrics["training/loss"] = float(loss)
-                
-            # Calculate perplexity
-            if metrics["training/loss"] > 0:
-                metrics["training/perplexity"] = math.exp(metrics["training/loss"])
+        # Safely try to get stats if available (but don't assume they exist)
+        try:
+            if hasattr(self.trainer, 'stats'):
+                if step in self.trainer.stats:
+                    for name, value in self.trainer.stats[step].items():
+                        # Convert tensor to scalar
+                        if isinstance(value, torch.Tensor):
+                            try:
+                                metrics[name] = value.item()
+                            except:
+                                pass
+                        elif isinstance(value, (int, float)):
+                            metrics[name] = value
+            
+            # Try alternative locations for metrics
+            if hasattr(self.trainer, 'metrics'):
+                for name, value in self.trainer.metrics.items():
+                    if isinstance(value, torch.Tensor):
+                        try:
+                            metrics[name] = value.item()
+                        except:
+                            pass
+                    elif isinstance(value, (int, float)):
+                        metrics[name] = value
+        except Exception as e:
+            logger.warning(f"Error accessing trainer stats: {e}")
         
-        # Get learning rate
-        if hasattr(self.trainer.train_module, 'optimizer') and hasattr(self.trainer.train_module.optimizer, 'param_groups'):
-            metrics["training/learning_rate"] = self.trainer.train_module.optimizer.param_groups[0]['lr']
-        
-        # Add throughput metrics if available 
-        if "throughput/device/TPS" in self.trainer.stats.get(step, {}):
-            metrics["throughput/tokens_per_second"] = self.trainer.stats[step]["throughput/device/TPS"]
-        
-        # Log metrics with explicit step
+        # Log to wandb
         if metrics:
             wandb.log(metrics, step=step)
     
     def post_train(self):
-        """Finish WandB run after training."""
+        """Finalize WandB run after training."""
         if not self.initialized or (is_distributed() and get_rank() != 0):
             return
             
