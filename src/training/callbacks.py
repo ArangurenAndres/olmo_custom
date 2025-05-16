@@ -358,8 +358,8 @@ class WandBCallback(Callback):
         metrics = {}
         
         # Log loss
-        if hasattr(self.trainer.train_state, 'loss'):
-            metrics["loss"] = self.trainer.train_state.loss
+        if hasattr(self.trainer, 'loss'):
+            metrics["loss"] = self.trainer.loss
             
         # Log learning rate if available
         if hasattr(self.trainer, 'optimizer') and hasattr(self.trainer.optimizer, 'param_groups'):
