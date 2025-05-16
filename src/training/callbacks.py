@@ -118,10 +118,17 @@ class InferenceCallback(Callback):
                 
                 # Get initial logits - use model directly without the labels
                 outputs = model(input_tensor)
+
+                # Handle different output formats
+                if hasattr(outputs, 'logits'):
+                    logits = outputs.logits
+                else:
+                    # Model returns the logits tensor directly
+                    logits = outputs
                 
                 # Generate tokens one by one
                 for _ in range(self.max_new_tokens):
-                    next_token_logits = outputs.logits[0, -1, :] / self.temperature
+                    next_token_logits = logits[0, -1, :] / self.temperature
                     next_token_logits[0] = -float("inf")  # Prevent PAD token generation
                     
                     # Sample next token
@@ -142,6 +149,12 @@ class InferenceCallback(Callback):
                     # Forward pass for next token with proper padding
                     input_tensor = torch.tensor([generated], device=model.device)
                     outputs = model(input_tensor)
+
+                    # Handle output format again
+                    if hasattr(outputs, 'logits'):
+                        logits = outputs.logits
+                    else:
+                        logits = outputs
             
             # Set back to train mode
             model.train()
@@ -332,13 +345,29 @@ class WandBCallback(Callback):
         # Extract and log metrics
         metrics = {}
         
-        # Log loss
-        if hasattr(self.trainer.train_state, 'loss'):
-            metrics["loss"] = self.trainer.train_state.loss
+        # Log loss - safely access it wherever it might be stored
+        try:
+            # Look in various possible locations for the loss
+            if hasattr(self.trainer, 'train_state') and hasattr(self.trainer.train_state, 'loss'):
+                metrics["loss"] = self.trainer.train_state.loss
+            elif hasattr(self.trainer, 'loss'):
+                metrics["loss"] = self.trainer.loss
+            elif hasattr(self.trainer, 'state') and hasattr(self.trainer.state, 'loss'):
+                metrics["loss"] = self.trainer.state.loss
+            elif hasattr(self.trainer, 'train_module') and hasattr(self.trainer.train_module, 'loss'):
+                metrics["loss"] = self.trainer.train_module.loss
+        except Exception as e:
+            # If we can't find loss, log a warning and continue
+            logger.warning(f"Could not find loss attribute: {e}")
             
         # Log learning rate if available
-        if hasattr(self.trainer, 'optimizer') and hasattr(self.trainer.optimizer, 'param_groups'):
-            metrics["learning_rate"] = self.trainer.optimizer.param_groups[0]['lr']
+        try:
+            if hasattr(self.trainer, 'optimizer') and hasattr(self.trainer.optimizer, 'param_groups'):
+                metrics["learning_rate"] = self.trainer.optimizer.param_groups[0]['lr']
+            elif hasattr(self.trainer.train_module, 'optimizer') and hasattr(self.trainer.train_module.optimizer, 'param_groups'):
+                metrics["learning_rate"] = self.trainer.train_module.optimizer.param_groups[0]['lr']
+        except Exception as e:
+            logger.warning(f"Could not find learning rate: {e}")
         
         # Log step
         metrics["step"] = self.trainer.global_step
