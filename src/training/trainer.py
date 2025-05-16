@@ -3,7 +3,9 @@ Enhanced trainer for OLMo with FSDP support.
 """
 
 import os
+import sys
 import logging
+import wandb
 import torch
 from typing import Dict, Any, Optional, List, Union
 
@@ -88,9 +90,13 @@ def create_trainer(
             
         # Add WandB callback if specified
         if config.get("use_wandb", False):
+            # IMPORTANT: Check if wandb is already initialized to prevent duplicate runs
+            is_wandb_initialized = 'wandb' in sys.modules and wandb.run is not None
+            
             wandb_cb = WandBCallback(
                 project_name=config.get("wandb_project", "olmo_training"),
-                config=config
+                config=config,
+                create_run=not is_wandb_initialized  # Only create a new run if one doesn't exist
             )
             trainer_config = trainer_config.with_callback("wandb", wandb_cb)
     
