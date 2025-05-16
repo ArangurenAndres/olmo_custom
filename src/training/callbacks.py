@@ -301,269 +301,128 @@ class CheckpointCallback(Callback):
         except Exception as e:
             logger.error(f"Error saving final checkpoint: {e}")
 
+
 class WandBCallback(Callback):
     """
     Weights & Biases integration for experiment tracking.
-    Revised to closely follow the user's working example structure.
     """
-
+    
     def __init__(
         self,
         project_name: str = "olmo_training",
         config: Optional[Dict[str, Any]] = None
     ):
-        super().__init__() # Call to the base class initializer
+        """
+        Initialize the WandB callback.
+        """
         if not WANDB_AVAILABLE:
-            raise ImportError(
-                "wandb is required for WandBCallback. "
-                "Please install with `pip install wandb`."
-            )
-
+            raise ImportError("wandb is required for WandBCallback")
+        
         self.project_name = project_name
         self.config = config or {}
-        self.wandb_initialized_this_instance = False # Flag to control initialization by this instance
-
+        self.initialized = False
+        self.last_step = -1
+    
     def pre_train(self):
         """Initialize WandB run before training."""
-        # Only initialize on the main process
         if is_distributed() and get_rank() != 0:
             return
-
-        # Initialize wandb only if this instance hasn't done it yet
-        if not self.wandb_initialized_this_instance:
-            try:
-                # If wandb.run is already active (e.g. from outside this callback),
-                # wandb.init() might error or re-use, depending on wandb's internal state/settings.
-                # This simple approach relies on that behavior or assumes no other init interferes.
-                if wandb.run is not None:
-                    logger.warning(
-                        f"WandBCallback.pre_train: wandb.run is already active (ID: {wandb.run.id}, Name: {wandb.run.name}). "
-                        "This callback will attempt to initialize or use existing run as per wandb.init behavior. "
-                        "If issues persist, ensure wandb.init is called consistently."
-                    )
-                
-                wandb.init(project=self.project_name, config=self.config)
-                self.wandb_initialized_this_instance = True # Mark that this instance has initialized
-                logger.info(
-                    f"WandB run initialized by WandBCallback "
-                    f"(ID: {wandb.run.id if wandb.run else 'N/A'}, Name: {wandb.run.name if wandb.run else 'N/A'})."
-                )
-
-                # Log model details to wandb.config (as in the user's working example)
-                # self.trainer should be set by the Trainer class before pre_train is called.
-                if hasattr(self.trainer, 'train_module') and hasattr(self.trainer.train_module, 'model'):
-                    model = self.trainer.train_module.model
-                    model_params = {
-                        "model/num_parameters": sum(p.numel() for p in model.parameters()),
-                        "model/trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
-                    }
-                    wandb.config.update(model_params)
-                    logger.info(f"Updated wandb.config with model parameters: {model_params}")
-                else:
-                    logger.warning(
-                        "WandBCallback.pre_train: Could not log model parameters to wandb.config. "
-                        "trainer.train_module.model not found."
-                    )
-            except Exception as e:
-                logger.error(f"Error during WandBCallback.pre_train wandb.init or config update: {e}", exc_info=True)
-                # self.wandb_initialized_this_instance remains False, so it might retry or indicate a persistent issue.
-        else:
-            logger.info("WandBCallback.pre_train: WandB run already initialized by this instance. Skipping.")
-
+        
+        # Properly handle existing runs - prevent duplicate initialization
+        if wandb.run is not None:
+            logger.info("WandB run already exists, reusing it")
+            self.initialized = True
+            return
+        
+        # Start a clean new wandb run with explicit configuration
+        run = wandb.init(
+            project=self.project_name, 
+            config=self.config,
+            reinit=True,
+            name=f"olmo-train-{time.strftime('%Y%m%d-%H%M%S')}",
+            resume="never"
+        )
+        
+        self.initialized = True
+        logger.info(f"Initialized new WandB run: {run.name}")
+        
+        # Log model details immediately
+        if hasattr(self.trainer, 'train_module') and hasattr(self.trainer.train_module, 'model'):
+            model = self.trainer.train_module.model
+            params_info = {
+                "model/num_parameters": sum(p.numel() for p in model.parameters()),
+                "model/trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
+            }
+            wandb.log(params_info, step=0)
+    
     def post_step(self):
         """Log metrics after each step."""
-        if not self.wandb_initialized_this_instance or (is_distributed() and get_rank() != 0) or wandb.run is None:
+        if not self.initialized or (is_distributed() and get_rank() != 0):
             return
-
-        # Ensure self.trainer and essential attributes are available
-        if not hasattr(self.trainer, 'global_step'):
-            logger.warning("WandBCallback.post_step: trainer.global_step not found. Cannot log metrics.")
+            
+        # Get current step and ensure monotonic increases
+        step = self.trainer.global_step
+        if step <= self.last_step:
             return
-        current_step = self.trainer.global_step
-
-        metrics_to_log = {}
-
-        # Log loss: Using self.trainer.loss (scalar float from olmo_core.Trainer)
-        # If self.trainer.train_state.loss is the correct path for your specific setup,
-        # change `self.trainer.loss` to `self.trainer.train_state.loss` below.
-        if hasattr(self.trainer, 'loss') and self.trainer.loss is not None:
-            loss_val = float(self.trainer.loss) # Stored as float by olmo_core.Trainer
-            metrics_to_log["train/loss"] = loss_val
-            if loss_val > 0: # Calculate perplexity only for positive loss
-                try:
-                    metrics_to_log["train/perplexity"] = math.exp(loss_val)
-                except OverflowError:
-                    metrics_to_log["train/perplexity"] = float('inf')
-                except Exception as e:
-                    logger.warning(f"Error calculating perplexity at step {current_step}: {e}")
-        else:
-            logger.debug(f"WandBCallback.post_step: trainer.loss not available at step {current_step}.")
-
-
-        # Log learning rate
-        if hasattr(self.trainer, 'optimizer') and \
-           hasattr(self.trainer.optimizer, 'param_groups') and \
-           self.trainer.optimizer.param_groups:
-            metrics_to_log["train/learning_rate"] = self.trainer.optimizer.param_groups[0]['lr']
-        else:
-            logger.debug(f"WandBCallback.post_step: Learning rate not available at step {current_step}.")
-
-        # Log metrics if any were collected
-        if metrics_to_log: # Only log if there's something to log
+        
+        self.last_step = step
+        
+        # Initialize metrics dictionary
+        metrics = {}
+        
+        # Get metrics from OLMo console logger output 
+        # This is the most reliable source for metrics
+        if hasattr(self.trainer, 'stats') and isinstance(self.trainer.stats, dict):
             try:
-                # Log with explicit step, which is best practice
-                wandb.log(metrics_to_log, step=current_step)
+                # Get the most recent stats
+                if step in self.trainer.stats:
+                    for name, value in self.trainer.stats[step].items():
+                        # Convert tensor to scalar if needed
+                        if isinstance(value, torch.Tensor):
+                            try:
+                                metrics[name] = value.item()
+                            except:
+                                pass
+                        elif isinstance(value, (int, float)):
+                            metrics[name] = value
             except Exception as e:
-                logger.error(
-                    f"WandBCallback.post_step: Failed to log metrics to wandb at step {current_step}: {e}. "
-                    f"Metrics: {metrics_to_log}",
-                    exc_info=True
-                )
-        else:
-            logger.debug(f"WandBCallback.post_step: No metrics to log at step {current_step}.")
-
+                logger.debug(f"Could not extract stats from trainer: {e}")
+        
+        # Directly get loss from train_module (fallback)
+        if "train/CE loss" not in metrics and hasattr(self.trainer, 'train_module'):
+            try:
+                train_module = self.trainer.train_module
+                if hasattr(train_module, 'loss'):
+                    loss = train_module.loss
+                    if isinstance(loss, torch.Tensor):
+                        metrics["loss"] = loss.item()
+                    else:
+                        metrics["loss"] = float(loss)
+                        
+                    # Calculate perplexity if we have loss
+                    if metrics["loss"] > 0:
+                        metrics["perplexity"] = math.exp(metrics["loss"])
+            except Exception as e:
+                logger.debug(f"Could not extract loss from train_module: {e}")
+        
+        # Get learning rate
+        try:
+            if hasattr(self.trainer.train_module, 'optimizer'):
+                optimizer = self.trainer.train_module.optimizer
+                if hasattr(optimizer, 'param_groups') and len(optimizer.param_groups) > 0:
+                    metrics["learning_rate"] = optimizer.param_groups[0]['lr']
+        except Exception as e:
+            logger.debug(f"Could not extract learning rate: {e}")
+        
+        # Log everything with explicit step to ensure proper order
+        if metrics:
+            wandb.log(metrics, step=step)
+    
     def post_train(self):
         """Finalize WandB run after training."""
-        if not self.wandb_initialized_this_instance or (is_distributed() and get_rank() != 0) or wandb.run is None:
-            # Log if an expected finish is not happening
-            if self.wandb_initialized_this_instance and get_rank() == 0 and wandb.run is None:
-                 logger.warning("WandBCallback.post_train: wandb.run is None, but instance was initialized. "
-                                "Run may have been finished externally or failed to initialize properly.")
+        if not self.initialized or (is_distributed() and get_rank() != 0):
             return
-
-        logger.info(
-            f"WandBCallback.post_train: Finishing WandB run "
-            f"(ID: {wandb.run.id}, Name: {wandb.run.name})."
-        )
-        try:
+        
+        # Ensure no additional runs are created
+        if wandb.run is not None:
             wandb.finish()
-        except Exception as e:
-            logger.error(f"Error during wandb.finish() in WandBCallback.post_train: {e}", exc_info=True)
-        
-        # Reset flag in case the callback instance is re-used in the same Python process
-        self.wandb_initialized_this_instance = False
-
-# class WandBCallback(Callback):
-#     """
-#     Weights & Biases integration for experiment tracking.
-#     """
-    
-#     def __init__(
-#         self,
-#         project_name: str = "olmo_training",
-#         config: Optional[Dict[str, Any]] = None
-#     ):
-#         """
-#         Initialize the WandB callback.
-#         """
-#         if not WANDB_AVAILABLE:
-#             raise ImportError("wandb is required for WandBCallback")
-        
-#         self.project_name = project_name
-#         self.config = config or {}
-#         self.initialized = False
-#         self.last_step = -1
-    
-#     def pre_train(self):
-#         """Initialize WandB run before training."""
-#         if is_distributed() and get_rank() != 0:
-#             return
-        
-#         # Properly handle existing runs - prevent duplicate initialization
-#         if wandb.run is not None:
-#             logger.info("WandB run already exists, reusing it")
-#             self.initialized = True
-#             return
-        
-#         # Start a clean new wandb run with explicit configuration
-#         run = wandb.init(
-#             project=self.project_name, 
-#             config=self.config,
-#             reinit=True,
-#             name=f"olmo-train-{time.strftime('%Y%m%d-%H%M%S')}",
-#             resume="never"
-#         )
-        
-#         self.initialized = True
-#         logger.info(f"Initialized new WandB run: {run.name}")
-        
-#         # Log model details immediately
-#         if hasattr(self.trainer, 'train_module') and hasattr(self.trainer.train_module, 'model'):
-#             model = self.trainer.train_module.model
-#             params_info = {
-#                 "model/num_parameters": sum(p.numel() for p in model.parameters()),
-#                 "model/trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
-#             }
-#             wandb.log(params_info, step=0)
-    
-#     def post_step(self):
-#         """Log metrics after each step."""
-#         if not self.initialized or (is_distributed() and get_rank() != 0):
-#             return
-            
-#         # Get current step and ensure monotonic increases
-#         step = self.trainer.global_step
-#         if step <= self.last_step:
-#             return
-        
-#         self.last_step = step
-        
-#         # Initialize metrics dictionary
-#         metrics = {}
-        
-#         # Get metrics from OLMo console logger output 
-#         # This is the most reliable source for metrics
-#         if hasattr(self.trainer, 'stats') and isinstance(self.trainer.stats, dict):
-#             try:
-#                 # Get the most recent stats
-#                 if step in self.trainer.stats:
-#                     for name, value in self.trainer.stats[step].items():
-#                         # Convert tensor to scalar if needed
-#                         if isinstance(value, torch.Tensor):
-#                             try:
-#                                 metrics[name] = value.item()
-#                             except:
-#                                 pass
-#                         elif isinstance(value, (int, float)):
-#                             metrics[name] = value
-#             except Exception as e:
-#                 logger.debug(f"Could not extract stats from trainer: {e}")
-        
-#         # Directly get loss from train_module (fallback)
-#         if "train/CE loss" not in metrics and hasattr(self.trainer, 'train_module'):
-#             try:
-#                 train_module = self.trainer.train_module
-#                 if hasattr(train_module, 'loss'):
-#                     loss = train_module.loss
-#                     if isinstance(loss, torch.Tensor):
-#                         metrics["loss"] = loss.item()
-#                     else:
-#                         metrics["loss"] = float(loss)
-                        
-#                     # Calculate perplexity if we have loss
-#                     if metrics["loss"] > 0:
-#                         metrics["perplexity"] = math.exp(metrics["loss"])
-#             except Exception as e:
-#                 logger.debug(f"Could not extract loss from train_module: {e}")
-        
-#         # Get learning rate
-#         try:
-#             if hasattr(self.trainer.train_module, 'optimizer'):
-#                 optimizer = self.trainer.train_module.optimizer
-#                 if hasattr(optimizer, 'param_groups') and len(optimizer.param_groups) > 0:
-#                     metrics["learning_rate"] = optimizer.param_groups[0]['lr']
-#         except Exception as e:
-#             logger.debug(f"Could not extract learning rate: {e}")
-        
-#         # Log everything with explicit step to ensure proper order
-#         if metrics:
-#             wandb.log(metrics, step=step)
-    
-#     def post_train(self):
-#         """Finalize WandB run after training."""
-#         if not self.initialized or (is_distributed() and get_rank() != 0):
-#             return
-        
-#         # Ensure no additional runs are created
-#         if wandb.run is not None:
-#             wandb.finish()
