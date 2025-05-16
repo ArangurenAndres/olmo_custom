@@ -22,7 +22,7 @@ vocab_size: 50304  # Will be adjusted based on tokenizer
 n_heads: 12
 n_kv_heads: 4      # GQA: n_kv_heads < n_heads
 global_dim: 768
-# head_dim: 64
+head_dim: 64
 
 # Layer-Wise Scaling parameters
 fnn_scalars: [0.5, 4.0]
