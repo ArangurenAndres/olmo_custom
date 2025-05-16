@@ -301,7 +301,6 @@ class CheckpointCallback(Callback):
         except Exception as e:
             logger.error(f"Error saving final checkpoint: {e}")
 
-
 class WandBCallback(Callback):
     """
     Weights & Biases integration for experiment tracking.
@@ -310,8 +309,7 @@ class WandBCallback(Callback):
     def __init__(
         self,
         project_name: str = "olmo_training",
-        config: Optional[Dict[str, Any]] = None,
-        create_run: bool = True
+        config: Optional[Dict[str, Any]] = None
     ):
         """
         Initialize the WandB callback.
@@ -319,7 +317,6 @@ class WandBCallback(Callback):
         Args:
             project_name: WandB project name
             config: Configuration to log
-            create_run: Whether to create a new run or reuse existing one
         """
         if not WANDB_AVAILABLE:
             raise ImportError("wandb is required for WandBCallback")
@@ -327,164 +324,245 @@ class WandBCallback(Callback):
         self.project_name = project_name
         self.config = config or {}
         self.initialized = False
-        self.last_step = -1
-        self.create_run = create_run
-        self.metrics_buffer = {}
+        
+        # Set default metrics to track
+        self.tracked_metrics = [
+            "loss"
+        ]
     
     def pre_train(self):
         """Initialize WandB run before training."""
+        # Only initialize on main process
         if is_distributed() and get_rank() != 0:
             return
-        
-        # Check if wandb is already initialized
-        if wandb.run is not None:
-            logger.info("WandB run already exists, reusing it")
-            self.initialized = True
-            return
             
-        # Only create a new run if requested
-        if self.create_run:
-            # Start a fresh wandb run
-            run = wandb.init(
-                project=self.project_name, 
-                config=self.config,
-                name=f"olmo-train-{time.strftime('%Y%m%d-%H%M%S')}",
-                resume="allow"
-            )
-            
+        # Initialize wandb
+        if not self.initialized:
+            wandb.init(project=self.project_name, config=self.config)
             self.initialized = True
-            logger.info(f"Initialized new WandB run: {run.name}")
-        
-        # Log model details
-        if self.initialized and hasattr(self.trainer, 'train_module') and hasattr(self.trainer.train_module, 'model'):
-            model = self.trainer.train_module.model
-            params_info = {
-                "model/num_parameters": sum(p.numel() for p in model.parameters()),
-                "model/trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
-            }
-            wandb.log(params_info, step=0)
+            
+            # Log model details if available
+            if hasattr(self.trainer.train_module, 'model'):
+                model = self.trainer.train_module.model
+                wandb.config.update({
+                    "num_parameters": sum(p.numel() for p in model.parameters()),
+                    "num_trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
+                })
     
     def post_step(self):
         """Log metrics after each step."""
         if not self.initialized or (is_distributed() and get_rank() != 0):
             return
             
-        # Get current step and ensure monotonic increases
-        step = self.trainer.global_step
-        if step <= self.last_step:
-            return
+        # Extract and log metrics
+        metrics = {}
         
-        self.last_step = step
-        
-        # Initialize metrics dictionary
-        metrics = {
-            "step": step,  # Always include step number
-            "epoch": getattr(self.trainer, 'epoch', 0)  # Include epoch if available
-        }
-        
-        # Method 1: Try to extract metrics from console_logger callback
-        # This is more reliable than trying to access trainer.stats directly
-        # console_logger = None
-        for callback_name, callback in self.trainer.callbacks.items():
-            if 'console_logger' in callback_name:
-                console_logger = callback
-                break
-                
-        if console_logger is not None and hasattr(console_logger, 'metrics'):
-            # Handle metrics differently based on type
-            if isinstance(console_logger.metrics, dict):
-                # Handle dictionary-style metrics (key-value pairs)
-                for name, value in console_logger.metrics.items():
-                    if isinstance(value, torch.Tensor):
-                        try:
-                            metrics[name] = value.item()
-                        except:
-                            pass
-                    elif isinstance(value, (int, float)):
-                        metrics[name] = value
-            elif isinstance(console_logger.metrics, list):
-                # Handle list-style metrics
-                for i, metric in enumerate(console_logger.metrics):
-                    if isinstance(metric, dict) and 'key' in metric and 'value' in metric:
-                        # If it's a list of dicts with key-value pairs
-                        name = metric['key']
-                        value = metric['value']
-                        if isinstance(value, torch.Tensor):
-                            try:
-                                metrics[name] = value.item()
-                            except:
-                                pass
-                        elif isinstance(value, (int, float)):
-                            metrics[name] = value
-                    elif hasattr(metric, 'name') and hasattr(metric, 'value'):
-                        # If it's a list of objects with name and value attributes
-                        name = metric.name
-                        value = metric.value
-                        if isinstance(value, torch.Tensor):
-                            try:
-                                metrics[name] = value.item()
-                            except:
-                                pass
-                        elif isinstance(value, (int, float)):
-                            metrics[name] = value
-        
-        # Method 2: Directly get loss from train_module
-        try:
-            train_module = self.trainer.train_module
-            if hasattr(train_module, 'loss'):
-                loss = train_module.loss
-                if isinstance(loss, torch.Tensor):
-                    metrics["train/loss"] = loss.item()
-                else:
-                    metrics["train/loss"] = float(loss)
-                
-                # Calculate perplexity
-                if metrics["train/loss"] > 0:
-                    metrics["train/perplexity"] = math.exp(metrics["train/loss"])
-        except Exception as e:
-            pass
-        
-        # Method 3: Look for metrics in an official way
-        try:
-            for metric_key, metric_value in self.trainer.get_metrics().items():
-                if isinstance(metric_value, torch.Tensor):
-                    metrics[metric_key] = metric_value.item()
-                else:
-                    metrics[metric_key] = metric_value
-        except:
-            pass
+        # Log loss
+        if hasattr(self.trainer.train_state, 'loss'):
+            metrics["loss"] = self.trainer.train_state.loss
             
-        # Method 4: Check if there are metrics in train_state
-        try:
-            if hasattr(self.trainer, 'train_state'):
-                for key in dir(self.trainer.train_state):
-                    if key.startswith('_'):
-                        continue
-                    val = getattr(self.trainer.train_state, key)
-                    if isinstance(val, (int, float)):
-                        metrics[f"train_state/{key}"] = val
-                    elif isinstance(val, torch.Tensor) and val.numel() == 1:
-                        metrics[f"train_state/{key}"] = val.item()
-        except:
-            pass
-            
-        # Get learning rate
-        try:
-            optim = getattr(self.trainer.train_module, 'optimizer', None)
-            if optim and hasattr(optim, 'param_groups') and len(optim.param_groups) > 0:
-                metrics["train/learning_rate"] = optim.param_groups[0]['lr']
-        except Exception as e:
-            pass
+        # Log learning rate if available
+        if hasattr(self.trainer, 'optimizer') and hasattr(self.trainer.optimizer, 'param_groups'):
+            metrics["learning_rate"] = self.trainer.optimizer.param_groups[0]['lr']
         
-        # Only log if we have metrics beyond step/epoch
-        if len(metrics) > 2:
-            wandb.log(metrics, step=step)
+        # Log step
+        metrics["step"] = self.trainer.global_step
+        
+        # Send to wandb
+        if metrics:
+            wandb.log(metrics)
     
     def post_train(self):
         """Finalize WandB run after training."""
         if not self.initialized or (is_distributed() and get_rank() != 0):
             return
+        
+        wandb.finish()
+
+
+# class WandBCallback(Callback):
+#     """
+#     Weights & Biases integration for experiment tracking.
+#     """
+    
+#     def __init__(
+#         self,
+#         project_name: str = "olmo_training",
+#         config: Optional[Dict[str, Any]] = None,
+#         create_run: bool = True
+#     ):
+#         """
+#         Initialize the WandB callback.
+        
+#         Args:
+#             project_name: WandB project name
+#             config: Configuration to log
+#             create_run: Whether to create a new run or reuse existing one
+#         """
+#         if not WANDB_AVAILABLE:
+#             raise ImportError("wandb is required for WandBCallback")
+        
+#         self.project_name = project_name
+#         self.config = config or {}
+#         self.initialized = False
+#         self.last_step = -1
+#         self.create_run = create_run
+#         self.metrics_buffer = {}
+    
+#     def pre_train(self):
+#         """Initialize WandB run before training."""
+#         if is_distributed() and get_rank() != 0:
+#             return
+        
+#         # Check if wandb is already initialized
+#         if wandb.run is not None:
+#             logger.info("WandB run already exists, reusing it")
+#             self.initialized = True
+#             return
             
-        # Only finish the run if we created it
-        if self.create_run and wandb.run is not None:
-            wandb.finish()
+#         # Only create a new run if requested
+#         if self.create_run:
+#             # Start a fresh wandb run
+#             run = wandb.init(
+#                 project=self.project_name, 
+#                 config=self.config,
+#                 name=f"olmo-train-{time.strftime('%Y%m%d-%H%M%S')}",
+#                 resume="allow"
+#             )
+            
+#             self.initialized = True
+#             logger.info(f"Initialized new WandB run: {run.name}")
+        
+#         # Log model details
+#         if self.initialized and hasattr(self.trainer, 'train_module') and hasattr(self.trainer.train_module, 'model'):
+#             model = self.trainer.train_module.model
+#             params_info = {
+#                 "model/num_parameters": sum(p.numel() for p in model.parameters()),
+#                 "model/trainable_parameters": sum(p.numel() for p in model.parameters() if p.requires_grad)
+#             }
+#             wandb.log(params_info, step=0)
+    
+#     def post_step(self):
+#         """Log metrics after each step."""
+#         if not self.initialized or (is_distributed() and get_rank() != 0):
+#             return
+            
+#         # Get current step and ensure monotonic increases
+#         step = self.trainer.global_step
+#         if step <= self.last_step:
+#             return
+        
+#         self.last_step = step
+        
+#         # Initialize metrics dictionary
+#         metrics = {
+#             "step": step,  # Always include step number
+#             "epoch": getattr(self.trainer, 'epoch', 0)  # Include epoch if available
+#         }
+        
+#         # Method 1: Try to extract metrics from console_logger callback
+#         # This is more reliable than trying to access trainer.stats directly
+#         # console_logger = None
+#         for callback_name, callback in self.trainer.callbacks.items():
+#             if 'console_logger' in callback_name:
+#                 console_logger = callback
+#                 break
+                
+#         if console_logger is not None and hasattr(console_logger, 'metrics'):
+#             # Handle metrics differently based on type
+#             if isinstance(console_logger.metrics, dict):
+#                 # Handle dictionary-style metrics (key-value pairs)
+#                 for name, value in console_logger.metrics.items():
+#                     if isinstance(value, torch.Tensor):
+#                         try:
+#                             metrics[name] = value.item()
+#                         except:
+#                             pass
+#                     elif isinstance(value, (int, float)):
+#                         metrics[name] = value
+#             elif isinstance(console_logger.metrics, list):
+#                 # Handle list-style metrics
+#                 for i, metric in enumerate(console_logger.metrics):
+#                     if isinstance(metric, dict) and 'key' in metric and 'value' in metric:
+#                         # If it's a list of dicts with key-value pairs
+#                         name = metric['key']
+#                         value = metric['value']
+#                         if isinstance(value, torch.Tensor):
+#                             try:
+#                                 metrics[name] = value.item()
+#                             except:
+#                                 pass
+#                         elif isinstance(value, (int, float)):
+#                             metrics[name] = value
+#                     elif hasattr(metric, 'name') and hasattr(metric, 'value'):
+#                         # If it's a list of objects with name and value attributes
+#                         name = metric.name
+#                         value = metric.value
+#                         if isinstance(value, torch.Tensor):
+#                             try:
+#                                 metrics[name] = value.item()
+#                             except:
+#                                 pass
+#                         elif isinstance(value, (int, float)):
+#                             metrics[name] = value
+        
+#         # Method 2: Directly get loss from train_module
+#         try:
+#             train_module = self.trainer.train_module
+#             if hasattr(train_module, 'loss'):
+#                 loss = train_module.loss
+#                 if isinstance(loss, torch.Tensor):
+#                     metrics["train/loss"] = loss.item()
+#                 else:
+#                     metrics["train/loss"] = float(loss)
+                
+#                 # Calculate perplexity
+#                 if metrics["train/loss"] > 0:
+#                     metrics["train/perplexity"] = math.exp(metrics["train/loss"])
+#         except Exception as e:
+#             pass
+        
+#         # Method 3: Look for metrics in an official way
+#         try:
+#             for metric_key, metric_value in self.trainer.get_metrics().items():
+#                 if isinstance(metric_value, torch.Tensor):
+#                     metrics[metric_key] = metric_value.item()
+#                 else:
+#                     metrics[metric_key] = metric_value
+#         except:
+#             pass
+            
+#         # Method 4: Check if there are metrics in train_state
+#         try:
+#             if hasattr(self.trainer, 'train_state'):
+#                 for key in dir(self.trainer.train_state):
+#                     if key.startswith('_'):
+#                         continue
+#                     val = getattr(self.trainer.train_state, key)
+#                     if isinstance(val, (int, float)):
+#                         metrics[f"train_state/{key}"] = val
+#                     elif isinstance(val, torch.Tensor) and val.numel() == 1:
+#                         metrics[f"train_state/{key}"] = val.item()
+#         except:
+#             pass
+            
+#         # Get learning rate
+#         try:
+#             optim = getattr(self.trainer.train_module, 'optimizer', None)
+#             if optim and hasattr(optim, 'param_groups') and len(optim.param_groups) > 0:
+#                 metrics["train/learning_rate"] = optim.param_groups[0]['lr']
+#         except Exception as e:
+#             pass
+        
+#         # Only log if we have metrics beyond step/epoch
+#         if len(metrics) > 2:
+#             wandb.log(metrics, step=step)
+    
+#     def post_train(self):
+#         """Finalize WandB run after training."""
+#         if not self.initialized or (is_distributed() and get_rank() != 0):
+#             return
+            
+#         # Only finish the run if we created it
+#         if self.create_run and wandb.run is not None:
+#             wandb.finish()
