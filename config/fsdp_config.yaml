@@ -20,3 +20,11 @@ save_optimizer: false              # Whether to save optimizer state
 # Performance tuning
 activation_checkpointing: true     # Use activation checkpointing to save memory
 activation_cpu_offload: false      # Offload activations to CPU
+
+# Keep the global batch size the same
+batch_size: 8  # This is likely batch_size * sequence_length = 8 * 1024 = 8,192
+
+# Adjust micro-batch size to be 1/4 of the global batch
+train_module:
+  rank_microbatch_size: 2048  # Set to 1/4 of your global batch size (8,192 ÷ 4)
+  max_sequence_length: 1024
