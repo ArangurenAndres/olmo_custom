@@ -37,9 +37,14 @@ from olmo_core.train.callbacks import Callback, WandBCallback, DownstreamEvaluat
 from olmo_core.data import TokenizerConfig
 from utils.setup_env_variables import setup_environment
 
+# ===== Added imports =====
+from olmo_core.train.callbacks.evaluator_callback import LMEvaluatorCallbackConfig
+from olmo_core.data import NumpyDatasetConfig, NumpyDatasetType
+# =========================
 
 
 config_file_name = "config.yaml"
+
 
 def load_config(path=config_file_name):
     with open(path, "r") as f:
@@ -143,18 +148,36 @@ def main():
 
     # Evaluation tasks CallBack
     # TODO: Consider moving task list, eval_interval, and eval_duration to config.yaml
-    downstream_eval_tasks = ["boolq", "piqa", "arc_easy"]  # would probably be fixed for the whole project
+ 
+    downstream_eval_tasks = ["arc_challenge", "arc_easy", "boolq", "commonsense_qa", "hellaswag", "mmlu_stem", "mmlu_humanities", "mmlu_social_sciences", "mmlu_other", "openbook_qa", "piqa", "social_iqa", "winogrande"]
     # each task has usually 1000 validation examples
     downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
         tasks=downstream_eval_tasks,
-        tokenizer=tokenizer_config, 
-        eval_interval=config["steps"]/config["evaluation_times"],  # evaluate once at the end
+        tokenizer=tokenizer_config,
+        eval_interval=config["steps"]/config["evaluation_times"],
         eval_on_startup=True, # run evaluation at the beginning as baseline
         log_interval=5,      # log progress every 20 eval batches
         enabled=True
     )
 
-    
+    # ===== LM Evaluator Callback Config =====
+    lm_eval_dataset_config = NumpyDatasetConfig(
+        paths=[config["data_dir"] + "/c4_validation.npy"],
+        tokenizer=tokenizer_config,
+        sequence_length=config["sequence_length"], # Assuming sequence_length is in your config
+        name=NumpyDatasetType.padded_fsl,
+        work_dir=work_dir,
+        metadata=[{"label": "c4_validation_custom"}]
+    )
+
+    lm_eval_callback_config = LMEvaluatorCallbackConfig(
+        eval_dataset=lm_eval_dataset_config,
+        eval_interval=config["steps"] / config.get("evaluation_times", 1), # Default to 1 if not set
+        eval_on_startup=True,
+        log_interval=5,
+        enabled=True
+    )
+    # =======================================
 
     trainer_config = TrainerConfig(
         save_folder=save_dir,
@@ -166,7 +189,8 @@ def main():
         device=str(device),
     ).with_callback("wandb", wandb_cb
     ).with_callback("inference", inference_cb
-    ).with_callback("downstream_eval", downstream_eval_cb_config)
+    ).with_callback("downstream_eval", downstream_eval_cb_config
+    ).with_callback("lm_evaluator", lm_eval_callback_config)
     
 
     trainer = trainer_config.build(train_module=train_module, data_loader=data_loader)
