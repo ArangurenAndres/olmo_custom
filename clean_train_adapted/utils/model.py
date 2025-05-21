@@ -13,6 +13,7 @@ def build_model(vocab_size, device, config):
         vocab_size=vocab_size,
         dtype=DType.bfloat16 if device.type == "cuda" else DType.float32,
         n_kv_heads=n_kv_heads,
+       # flash_attn=config["flash_attn"],
         #init_method=InitMethod.normal   # GIVES AN ERROR IF SET   
     )
 

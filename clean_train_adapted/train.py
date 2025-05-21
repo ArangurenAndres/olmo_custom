@@ -61,7 +61,7 @@ def main():
 
     # SETUP DATA DIRECTORIES and checkpoints dir, work dir
     timestamp = time.strftime('%m-%d_%H-%M')
-    run_dir = os.path.join(config["data_dir"], f"run_{timestamp}")
+    run_dir = os.path.join(config["data_dir"], "checkpoints", f"run_{timestamp}")
     save_dir = os.path.join(run_dir, "checkpoints")
     work_dir = os.path.join(run_dir, "trainer_work_dir")
     os.makedirs(run_dir, exist_ok=True)
@@ -148,8 +148,40 @@ def main():
 
     # Evaluation tasks CallBack
     # TODO: Consider moving task list, eval_interval, and eval_duration to config.yaml
- 
-    downstream_eval_tasks = ["arc_challenge", "arc_easy", "boolq", "commonsense_qa", "hellaswag", "mmlu_stem", "mmlu_humanities", "mmlu_social_sciences", "mmlu_other", "openbook_qa", "piqa", "social_iqa", "winogrande"]
+    #["arc_challenge", "arc_easy", "boolq", "copa", "headqa_en", "hellaswag", "logiqa", "mathqa", "mrpc",
+    #"openbookqa", "piqa", "qnli", "qqp", "rte", "sciq", "sst", "wic", "winogrande", "wnli", "wsc"];
+
+    #downstream_eval_tasks = ["arc_challenge", "arc_easy", "boolq", "commonsense_qa",  #"hellaswag", "mmlu_stem", "openbook_qa", "piqa", "social_iqa"]
+
+    downstream_eval_tasks = [
+        # General Reasoning / QA / Commonsense (Good for most models)
+        "arc_challenge",
+        "arc_easy",
+        "boolq",
+        "commonsense_qa",
+        "hellaswag",
+        "openbook_qa",
+        "piqa",
+        "social_iqa",
+        "sciq",
+        # Math Specific
+        "mmlu_stem",                     # Broad STEM, includes math
+        # "mmlu_stem_mc_5shot",          # MMLU STEM, multiple choice, 5-shot
+        # "mmlu_stem_val_mc_5shot",      # MMLU STEM, validation, multiple choice, 5-shot
+        "basic_arithmetic",
+         "gsm8k_gold_bpb_5shot",        # Grade School Math
+        # Minerva Math (more advanced math)
+      #   "minerva_math_prealgebra_gold_bpb_0shot",
+      #   "minerva_math_precalculus_gold_bpb_0shot",
+        # Code Specific
+       # "codex_humaneval_gold_bpb_0shot",
+       # "codex_mbpp_gold_bpb_0shot"
+    ]
+    #"mmlu_mc_std_elementary_mathematics", "mmlu_mc_std_high_school_mathematics" ]
+    # "qqp", "qnli"]  "m2d2_wikipedia_unsplit", "wikitext_103"] 
+    #"mrpc", "matqa", "sciq",  ,
+    #"mmlu_std_high_school_mathematics",
+
     # each task has usually 1000 validation examples
     downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
         tasks=downstream_eval_tasks,
@@ -190,7 +222,10 @@ def main():
     ).with_callback("wandb", wandb_cb
     ).with_callback("inference", inference_cb
     ).with_callback("downstream_eval", downstream_eval_cb_config
-    ).with_callback("lm_evaluator", lm_eval_callback_config)
+    )
+
+    if config.get("data_preparation", {}).get("validation", False):
+        trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
     
 
     trainer = trainer_config.build(train_module=train_module, data_loader=data_loader)

@@ -8,20 +8,21 @@ wandb_project: "all_in_olmo"
 sequence_length: 1024
 # batch_size is a fallback if 'global_batch_size' in the Training Hyperparameters section is not specified.
 # It represents the number of sequences in a global batch (for one optimizer step).
-batch_size: 560
+batch_size: 80
 micro_batch_size: 80 # Number of sequences processed per device in a single forward/backward pass.
-steps: 8000
-
+steps: 15_000
 
 #set to - (minus) to disable evaluation and inference
-evaluation_times: 10 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
-inference_times: 10   # Run inference 2 times (inference_interval = steps/inference_times)
+evaluation_times: -1 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
+inference_times: -1   # Run inference 2 times (inference_interval = steps/inference_times)
 
 # Group Query Attention (GQA)
 n_kv_heads: 4                             # Number of key/value heads for GQA. Must be <= n_heads.
                                           # Make sure build_model passes this to TransformerConfig.
 # Layer-Wise Scaling parameters
-wandb_name: "5B_tokens"
+
+learning_rate: 0.001
+# INCREASE LEARNING RATE for small runs <5B tokens
 
 fnn_scalars: [1.0, 1.0]
 qkv_scalars: [1.0, 1.0]
@@ -31,24 +32,67 @@ output_scalars: [1.0, 1.0]
 #output_scalars: [0.8, 1.2]
 verbose_scaling: false
 
+wandb_name: "1B_math"
+train_data_file: "1B_math.npy"
+
+
 # -----------------------------------------------------------------------------
 # directories config
 # -----------------------------------------------------------------------------
 data_dir: ./data_local_test                # Directory for prepared data and checkpoints
 save_dir: checkpoints
 
+
+
 #------------------------------------------------------------------------------------------------
 # DATA PREPARATION ARGUMENTS
 #------------------------------------------------------------------------------------------------
 data_preparation:
-  output_file_name: "wiki_tokens.npy" # Name of the tokenized file within data.data_dir
+  output_file_name: "1B_math.npy" # Name of the tokenized file within data.data_dir
   validation_output_file_name: "c4_validation.npy"
   validation: False
   #tokenizer_name: "allenai/gpt-neox-olmo-dolma-v1_5" # assuming we're not changin tokenizer
-  hf_dataset_name: "wikipedia"
-  hf_dataset_subset: "20220301.en"
-  total_tokens_to_collect: 300_000
-  tokenizer_processing_batch_size: 1000 
+  #hf_dataset_name: "wikipedia"
+  #hf_dataset_subset: "20220301.en"
+  total_tokens_to_collect: 1_500_000_000
+  tokenizer_processing_batch_size: 5000
+  dataset_proportions:
+    #allenai/dolmino-mix-1124/wiki:   1.0
+    #allenai/dolmino-mix-1124/dclm
+    #allenai/dolmino-mix-1124/flan: 0
+    #allenai/dolmino-mix-1124/pes2o: 0.8
+    
+    ### SCIENCE DATASETS
+    #allenai/ai2_arc/ARC-Challenge: 0.01
+    #allenai/ai2_arc/ARC-Easy: 0.01
+    #allenai/sciq: 0.01
+
+    ### CODE AND MATH DATASETS
+    #tokyotech-llm/swallow-code/exp1-the-stack-v2: 1.0
+    math-ai/AutoMathText/web-0.50-to-1.00: 0.5
+    #math-ai/AutoMathText/code-full: 0.25
+    math-ai/AutoMathText/arxiv-full: 0.5
+
+
+#ds = load_dataset("allenai/ai2_arc", "ARC-Challenge")
+#ds = load_dataset("allenai/ai2_arc", "ARC-Easy")
+#7k rows * 100 tokens = 700k tokens
+
+#ds = load_dataset("allenai/sciq")
+#11k rows * 100 tokens = 1.1M tokens
+
+
+### Coding dataset 
+#ds = load_dataset("tokyotech-llm/swallow-code", "exp1-the-stack-v2")
+
+### Math dataset
+#ds = load_dataset("math-ai/AutoMathText", "web-0.50-to-1.00") # or any valid config_name
+#ds = load_dataset("math-ai/AutoMathText", "code-full") # or any valid config_name
+#ds = load_dataset("math-ai/AutoMathText", "arxiv-full") # or any valid config_name
+
+
+
+
 
 
 
@@ -92,7 +136,9 @@ WANDB_API_KEY: "8e07447fa3d6269331f7ecd0b27f8518c2a65855"
 #                                           # If OLMo infers, it's often global_batch_size / world_size / gradient_accumulation_steps.
 
 # Assuming the parameters below this line are the ones you actually want active for this section:
-learning_rate: 0.0004
+
+#learning_rate: 0.001
+# INCREASE LEARNING RATE for small runs <5B tokens
 weight_decay: 0.1
 betas: [0.9, 0.95]                        # AdamW betas
 seed: 42                                  # Base seed for reproducibility (will be adjusted per rank in train.py)
@@ -137,7 +183,7 @@ head_dim: 64                              # Dimensionality of each attention hea
 # -----------------------------------------------------------------------------
 # Inference Callback
 # -----------------------------------------------------------------------------
-inference_interval: 20                     # Run inference every N global steps
+#inference_interval: 20                     # Run inference every N global steps
 inference_prompt: "The universe is "
 
 

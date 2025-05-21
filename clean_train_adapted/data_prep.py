@@ -48,7 +48,11 @@ def main():
 
     else:
         data_path = os.path.join(data_dir, config["data_preparation"]["output_file_name"])
-        download_and_tokenize(data_path, config["sequence_length"], config["data_preparation"]["total_tokens_to_collect"])
+        download_and_tokenize(data_path, 
+            config["sequence_length"], 
+            config["data_preparation"]["total_tokens_to_collect"], 
+            config["data_preparation"]["tokenizer_processing_batch_size"], 
+            config["data_preparation"]["dataset_proportions"])
     
     # Validate the tokenized data
     validate_tokenized_data(data_path, config["sequence_length"])

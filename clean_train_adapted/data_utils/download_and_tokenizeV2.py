@@ -6,7 +6,7 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 from olmo_core.data import TokenizerConfig
 
-def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin):
+def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, tokenizer_processing_batch_size, dataset_proportions):
     """
     Download and tokenize multiple datasets according to specified proportions,
     collecting tokens up to total_tokens_with_margin.
@@ -17,8 +17,8 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin):
         total_tokens_with_margin: Total tokens needed with margin
     """
 
-    total_tokens_with_margin = 5_000_000_000
-    tokenizer_processing_batch_size = 5000  # Number of articles/entries to tokenize at once
+    #total_tokens_with_margin = 5_000_000_000
+   # tokenizer_processing_batch_size = 5000  # Number of articles/entries to tokenize at once
 
 
     # Load tokenizer
@@ -32,14 +32,12 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin):
     eos_token_id = tokenizer_config.eos_token_id
 
 
-    DATASET_PROPORTIONS = {
-        "dclm":   0.50,
-        "flan":   0.25,
-        "pes2o":  0.05,
-        "wiki":   0.20,
-    }
-    # Source for proportions and some dataset names: https://huggingface.co/datasets/allenai/dolmino-mix-1124
-    from datasets import load_dataset
+   # DATASET_PROPORTIONS = {
+        #"dclm":   0.50,
+    #    "flan":   0.8,
+        #"pes2o":  0.05,
+    #    "wiki":   0.2,
+    #}
 
     
     # Define the tokenization function to be mapped
@@ -59,7 +57,7 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin):
 
     print("Starting dataset processing...")
 
-    for dataset_hf_name, proportion in DATASET_PROPORTIONS.items():
+    for dataset_hf_name, proportion in dataset_proportions.items():
         if overall_collected_tokens_count >= total_tokens_with_margin:
             print("Overall token target reached. Stopping further dataset processing.")
             break
@@ -70,11 +68,19 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin):
         print(f"\nProcessing dataset: {dataset_hf_name}. Target tokens for this dataset: {tokens_to_collect_for_this_dataset:,}")
 
         current_dataset_object = None
-        # Assumes other datasets are loadable directly by name
-        print(f"Loading dataset {dataset_hf_name} with streaming...")
+        
+        # Parse dataset name and potential subset/config name
+        dataset_name_parts = dataset_hf_name.rsplit('/', 1) # Split only on the last '/'
+        main_dataset_name = dataset_name_parts[0]
+        subset_name = dataset_name_parts[1] if len(dataset_name_parts) > 1 else None
+
+        print(f"Loading dataset {main_dataset_name} (subset: {subset_name}) with streaming...")
         try:
             current_dataset_object = load_dataset(
-                "allenai/dolmino-mix-1124",dataset_hf_name, split="train", streaming=True,
+                main_dataset_name,
+                name=subset_name,  # Pass the subset as the 'name' argument
+                split="train", 
+                streaming=True,
                 cache_dir=os.environ.get("HF_DATASETS_CACHE")
             )
             print(f"Successfully initiated streaming for {dataset_hf_name}.")
@@ -139,7 +145,8 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin):
     print(f"Total concatenated tokens: {len(all_tokens_np):,}")
 
     print("Shuffling all collected tokens...")
-    np.random.shuffle(all_tokens_np)
+    #np.random.shuffle(all_tokens_np)
+    # FKING stupid shuffled all tokens that are in 1d array
 
 
     # --- Reshape and Save ---

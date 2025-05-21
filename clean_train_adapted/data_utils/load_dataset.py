@@ -41,7 +41,7 @@ def load_prepared_dataset(config):
 
     
     # --- 3. Validate Data Path ---
-    data_path = os.path.join(config["data_dir"], "wiki_tokens.npy")
+    data_path = os.path.join(config["data_dir"], config["train_data_file"])
     if not os.path.exists(data_path):
         raise FileNotFoundError(
             f"Base tokenized data not found at {data_path}. "
