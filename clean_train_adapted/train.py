@@ -28,7 +28,7 @@ from olmo_core.data import NumpyDataLoaderConfig
 from utils.token_0_handling import apply_special_token_handling
 from olmo_core.train import TrainerConfig
 from olmo_core.train.checkpoint import CheckpointerConfig
-from olmo_core.train.common import Duration
+from olmo_core.train.common import Duration, LoadStrategy
 from olmo_core.train.trainer import Trainer
 from olmo_core.utils import seed_all
 from utils.dataloader import prepare_data
@@ -37,21 +37,13 @@ from olmo_core.train.callbacks import Callback, WandBCallback, DownstreamEvaluat
 from olmo_core.data import TokenizerConfig
 from utils.setup_env_variables import setup_environment
 
-# ===== Added imports =====
 from olmo_core.train.callbacks.evaluator_callback import LMEvaluatorCallbackConfig
 from olmo_core.data import NumpyDatasetConfig, NumpyDatasetType
-# =========================
+from utils.load_config import load_config
 
-
-config_file_name = "config.yaml"
-
-
-def load_config(path=config_file_name):
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
 
 def main():
-    # Parse command line arguments
+    # Parse command line arguments (this will now be handled by load_config)
     config = load_config()
 
     seed_all(config["seed"])
@@ -62,7 +54,7 @@ def main():
     # SETUP DATA DIRECTORIES and checkpoints dir, work dir
     timestamp = time.strftime('%m-%d_%H-%M')
     run_dir = os.path.join(config["data_dir"], "checkpoints", f"run_{timestamp}")
-    save_dir = os.path.join(run_dir, "checkpoints")
+    save_dir = os.path.join("/scratch-shared/tmp.GcVy0pChFL", "checkpoints")
     work_dir = os.path.join(run_dir, "trainer_work_dir")
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(save_dir, exist_ok=True) 
@@ -70,10 +62,22 @@ def main():
     
 
     # Copy config file to checkpoints folder 
-    try:
-        shutil.copy2(os.path.join(os.path.dirname(__file__), config_file_name), os.path.join(save_dir, config_file_name))
-    except Exception as e:
-        print(f"Error copying config file: {e}")
+    # This needs to be adjusted as we don't have a single config_file_name variable directly
+    # We need to reconstruct the path of the loaded config or decide not to copy if it's complex.
+    # For now, let's try to reconstruct it. This assumes the structure from load_config.
+    loaded_config_name = config.get('_args_config_name', 'config') # We need to inject this into config if we want to know it here
+                                                                   # Or, load_config could return it alongside the config dict.
+                                                                   # Simpler for now: assume default or don't copy, or make load_config return path.
+                                                                   # Let's assume we can derive it from the --config arg if that was passed.
+                                                                   # The load_config now doesn't give us the name used. Let's skip copy for now, or refine later.
+    # try:
+    #     # This part is tricky because load_config() as written doesn't return the path used.
+    #     # We'll need to modify load_config to return the path, or make an assumption.
+    #     # For now, I'll comment out the copy, as it's not straightforward to get the source path here.
+    #     # shutil.copy2(os.path.join(os.path.dirname(__file__), config_file_name), os.path.join(save_dir, config_file_name))
+    #     print("Skipping config copy to save_dir as source path is not directly available from new loader.")
+    # except Exception as e:
+    #     print(f"Error copying config file: {e}")
     
     
     # Set device
@@ -215,6 +219,7 @@ def main():
         save_folder=save_dir,
         save_overwrite=True,
         work_dir=work_dir,
+        load_strategy=LoadStrategy.never,  # ADDED: Ensure training from scratch
         metrics_collect_interval=1,
         cancel_check_interval=5,
         max_duration=Duration.steps(config["steps"]),

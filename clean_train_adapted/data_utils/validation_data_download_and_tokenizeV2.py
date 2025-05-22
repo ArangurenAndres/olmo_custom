@@ -17,7 +17,7 @@ def validation_download_and_tokenize(data_path, sequence_length, total_tokens_wi
         total_tokens_with_margin: Total tokens needed with margin
     """
 
-    total_tokens_with_margin = 500_000
+    total_tokens_with_margin = 1_000_000
     tokenizer_processing_batch_size = 100  # Number of articles/entries to tokenize at once
 
 
@@ -134,8 +134,6 @@ def validation_download_and_tokenize(data_path, sequence_length, total_tokens_wi
     del all_collected_token_arrays
     print(f"Total concatenated tokens: {len(all_tokens_np):,}")
 
-    print("Shuffling all collected tokens...")
-    np.random.shuffle(all_tokens_np)
 
 
     # --- Reshape and Save ---

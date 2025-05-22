@@ -17,10 +17,13 @@ def validate_tokenized_data(data_path, sequence_length):
     Args:
         data_path: Path to the tokenized data file
         sequence_length: Expected sequence length
+        number_of_samples: Number of sequence samples to decode and print (default: 2)
     
     Returns:
         bool: True if validation successful
     """
+
+    number_of_samples = 15
     print(f"Validating tokenized data at {data_path}")
     
     # Check if file exists
@@ -59,28 +62,57 @@ def validate_tokenized_data(data_path, sequence_length):
         data[data == 0] = 1
         np.save(data_path, data)
     
+    # Calculate and print token ID distribution
+    print("\n--- Token ID Distribution ---")
+    token_ids, counts = np.unique(data, return_counts=True)
+    token_id_distribution_meta = {str(tid): int(c) for tid, c in zip(token_ids, counts)}
+    
+    print(f"Total unique token IDs: {len(token_ids)}")
+    sorted_indices = np.argsort(counts)[::-1]  # Sort by counts descending
+    print("Top 10 most frequent token IDs:")
+    for i in range(min(10, len(token_ids))):
+        idx = sorted_indices[i]
+        tid = token_ids[idx]
+        count = counts[idx]
+        percentage = (count / data.size) * 100
+        print(f"  Token ID {tid}: {count:,} occurrences ({percentage:.2f}%)")
+    print("Full token ID distribution saved in metadata JSON.")
+    print("-----------------------------")
+    
     # Load tokenizer for decoding samples
     tokenizer = AutoTokenizer.from_pretrained(
         "allenai/gpt-neox-olmo-dolma-v1_5",
-        cache_dir=os.path.join(os.environ["TRANSFORMERS_CACHE"], "tokenizers")
+        cache_dir=os.path.join(os.environ.get("TRANSFORMERS_CACHE", ".cache/transformers"), "tokenizers")
     )
     
-    # Sample 200 tokens from two different sequences for demonstration
+    # Sample tokens for demonstration
+    decoded_samples_for_metadata = []
     num_sequences = data.shape[0]
-    if num_sequences >= 2:
-        # Take from two different sequences
-        sample1_idx = np.random.randint(0, num_sequences)
-        sample2_idx = (sample1_idx + num_sequences // 2) % num_sequences  # Take from a different part
+    
+    actual_num_to_sample = 0
+    if num_sequences > 0:
+        actual_num_to_sample = min(number_of_samples, num_sequences)
+        if number_of_samples > num_sequences:
+            print(f"\nWarning: Requested {number_of_samples} samples, but only {num_sequences} sequences are available. Sampling {num_sequences} sequences.")
+    elif number_of_samples > 0:
+        print(f"\nWarning: Requested {number_of_samples} samples, but there are 0 sequences available.")
+
+    if actual_num_to_sample > 0:
+        sample_indices = np.random.choice(num_sequences, size=actual_num_to_sample, replace=False)
+        if isinstance(sample_indices, np.int64): # Handle single sample case from np.random.choice
+            sample_indices = [sample_indices.item()]
         
-        sample1 = data[sample1_idx, :200].tolist()
-        sample2 = data[sample2_idx, :200].tolist()
-        
-        # Decode the samples
-        decoded_sample1 = tokenizer.decode(sample1)
-        decoded_sample2 = tokenizer.decode(sample2)
-        
-        print(f"Sample 1 (Sequence {sample1_idx}):\n{decoded_sample1[:100]}...")
-        print(f"Sample 2 (Sequence {sample2_idx}):\n{decoded_sample2[:100]}...")
+        print(f"\n--- Decoded Samples (first 200 tokens from each, showing first 100 chars) ---")
+        for i, seq_idx in enumerate(sample_indices):
+            sample_tokens = data[seq_idx, :200].tolist()
+            decoded_sample_text = tokenizer.decode(sample_tokens)
+            
+            print(f"Sample {i+1} (from Sequence {seq_idx}): \n{decoded_sample_text[:100]}...")
+            decoded_samples_for_metadata.append({
+                "original_sequence_index": int(seq_idx),
+                "decoded_sample_200_tokens": decoded_sample_text
+            })
+        print("--------------------------------------------------------------------")
     
     # Create metadata
     metadata = {
@@ -93,11 +125,8 @@ def validate_tokenized_data(data_path, sequence_length):
             "min": int(np.min(data)),
             "max": int(np.max(data))
         },
-        "samples": {
-            "sample1 decoded": decoded_sample1,
-            "sample2 decoded": decoded_sample2
-            
-        }
+        "samples": decoded_samples_for_metadata,
+        "token_id_distribution": token_id_distribution_meta
     }
     
     # Save metadata
@@ -111,6 +140,7 @@ def validate_tokenized_data(data_path, sequence_length):
     print(f"- Sequence length: {metadata['sequence_length']}")
     print(f"- Total tokens: {metadata['total_tokens']:,}")
     print(f"- Token ID range: {metadata['token_range']['min']} to {metadata['token_range']['max']}")
-    print(f"- Added token samples to metadata")
+    print(f"- Added {len(decoded_samples_for_metadata)} token sample(s) to metadata")
+    print(f"- Token ID distribution statistics added to metadata")
     
     return True 

@@ -14,17 +14,14 @@ from transformers import AutoTokenizer
 from olmo_core.data import TokenizerConfig
 import yaml
 from utils.setup_env_variables import setup_environment
+from utils.load_config import load_config
 
-
-def load_config(path="config.yaml"):
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
 
 def main():
     # Setup environment (cache paths)
     setup_environment() 
 
-    config = load_config() 
+    config = load_config()
 
     print(f"Starting data preparation for OLMo training")
 
