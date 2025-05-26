@@ -54,30 +54,14 @@ def main():
     # SETUP DATA DIRECTORIES and checkpoints dir, work dir
     timestamp = time.strftime('%m-%d_%H-%M')
     run_dir = os.path.join(config["data_dir"], "checkpoints", f"run_{timestamp}")
-    save_dir = os.path.join("/scratch-shared/tmp.GcVy0pChFL", "checkpoints")
+    save_dir = os.path.join("/scratch-shared/tmp.GcVy0pChFL", f"checkpoints_{timestamp}")
     work_dir = os.path.join(run_dir, "trainer_work_dir")
     os.makedirs(run_dir, exist_ok=True)
     os.makedirs(save_dir, exist_ok=True) 
     os.makedirs(work_dir, exist_ok=True)
     
 
-    # Copy config file to checkpoints folder 
-    # This needs to be adjusted as we don't have a single config_file_name variable directly
-    # We need to reconstruct the path of the loaded config or decide not to copy if it's complex.
-    # For now, let's try to reconstruct it. This assumes the structure from load_config.
-    loaded_config_name = config.get('_args_config_name', 'config') # We need to inject this into config if we want to know it here
-                                                                   # Or, load_config could return it alongside the config dict.
-                                                                   # Simpler for now: assume default or don't copy, or make load_config return path.
-                                                                   # Let's assume we can derive it from the --config arg if that was passed.
-                                                                   # The load_config now doesn't give us the name used. Let's skip copy for now, or refine later.
-    # try:
-    #     # This part is tricky because load_config() as written doesn't return the path used.
-    #     # We'll need to modify load_config to return the path, or make an assumption.
-    #     # For now, I'll comment out the copy, as it's not straightforward to get the source path here.
-    #     # shutil.copy2(os.path.join(os.path.dirname(__file__), config_file_name), os.path.join(save_dir, config_file_name))
-    #     print("Skipping config copy to save_dir as source path is not directly available from new loader.")
-    # except Exception as e:
-    #     print(f"Error copying config file: {e}")
+    loaded_config_name = config.get('_args_config_name', 'config') 
     
     
     # Set device
@@ -143,11 +127,17 @@ def main():
         cancel_check_interval=10,
         config=config
     )
+
+    # Get inference prompts and mode from config
+    inference_prompts = config["inference_prompts"] if "inference_prompts" in config else [config["inference_prompt"] if "inference_prompt" in config else "Hello world"]
+    inference_mode = config["inference_mode"] if "inference_mode" in config else "all"
+
     inference_cb = InferenceCallback(
         model=model,
         tokenizer_config=tokenizer_config,
-        prompt=config["inference_prompt"],
-        interval=config["steps"]/config["inference_times"]
+        prompts=inference_prompts,
+        interval=config["steps"]/config["inference_times"],
+        inference_mode=inference_mode
     )
 
     # Evaluation tasks CallBack
@@ -227,10 +217,7 @@ def main():
     ).with_callback("wandb", wandb_cb
     ).with_callback("inference", inference_cb
     ).with_callback("downstream_eval", downstream_eval_cb_config
-    )
-
-    if config.get("data_preparation", {}).get("validation", False):
-        trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
+    ).with_callback("lm_evaluator", lm_eval_callback_config)
     
 
     trainer = trainer_config.build(train_module=train_module, data_loader=data_loader)

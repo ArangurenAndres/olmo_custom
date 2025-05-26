@@ -32,19 +32,52 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
     eos_token_id = tokenizer_config.eos_token_id
 
 
-   # DATASET_PROPORTIONS = {
-        #"dclm":   0.50,
-    #    "flan":   0.8,
-        #"pes2o":  0.05,
-    #    "wiki":   0.2,
-    #}
 
-    
+
     # Define the tokenization function to be mapped
-    def tokenize_function(examples):
-        # Tokenize texts - IMPORTANT: Use the tokenizer directly on the batch
-        tokenized_output = tokenizer(examples["text"], truncation=False, padding=False)
-        # Add EOS token manually if needed (tokenizer might handle this depending on config)
+    def tokenize_function(examples, dataset_name_for_logic=""):
+        current_examples = examples
+
+        if "text" not in examples:
+            if "ai2_arc" in dataset_name_for_logic.lower():
+                texts = []
+                num_examples = len(examples.get("question", []))
+                for i in range(num_examples):
+                    question = examples["question"][i]
+                    choices_text_list = []
+                    if ("choices" in examples and examples["choices"] and 
+                        isinstance(examples["choices"], list) and i < len(examples["choices"]) and 
+                        examples["choices"][i] and 
+                        "text" in examples["choices"][i] and "label" in examples["choices"][i]):
+                        for label, text_choice in zip(examples["choices"][i]["label"], examples["choices"][i]["text"]):
+                            choices_text_list.append(f"{label}) {text_choice}")
+                    choices_str = "\\n".join(choices_text_list)
+                    answer_key = examples["answerKey"][i] if "answerKey" in examples and isinstance(examples["answerKey"], list) and i < len(examples["answerKey"]) else "N/A"
+                    
+                    combined_text = f"Question: {question}\\nChoices:\\n{choices_str}\\nAnswer: {answer_key}"
+                    texts.append(combined_text)
+                
+                if texts: 
+                    current_examples = {"text": texts}
+
+            elif "sciq" in dataset_name_for_logic.lower():
+                texts = []
+                num_examples = len(examples.get("question", []))
+                for i in range(num_examples):
+                    question = examples["question"][i]
+                    support = examples["support"][i] if "support" in examples and isinstance(examples["support"], list) and i < len(examples["support"]) else ""
+                    correct_answer = examples["correct_answer"][i] if "correct_answer" in examples and isinstance(examples["correct_answer"], list) and i < len(examples["correct_answer"]) else "N/A"
+                    
+                    combined_text = f"Question: {question}\\\\nSupport: {support}\\\\nAnswer: {correct_answer}"
+                    texts.append(combined_text)
+
+                if texts:
+                    current_examples = {"text": texts}
+
+        if "text" not in current_examples or not isinstance(current_examples["text"], list) or not current_examples["text"]:
+            return {"input_ids": [], "attention_mask": []}
+
+        tokenized_output = tokenizer(current_examples["text"], truncation=False, padding=False)
         for ids in tokenized_output["input_ids"]:
             if not ids or ids[-1] != eos_token_id:
                 ids.append(eos_token_id)
@@ -56,6 +89,8 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
     overall_collected_tokens_count = 0
 
     print("Starting dataset processing...")
+
+    
 
     for dataset_hf_name, proportion in dataset_proportions.items():
         if overall_collected_tokens_count >= total_tokens_with_margin:
@@ -76,17 +111,17 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
 
         print(f"Loading dataset {main_dataset_name} (subset: {subset_name}) with streaming...")
         try:
-            current_dataset_object = load_dataset(
-                main_dataset_name,
-                name=subset_name,  # Pass the subset as the 'name' argument
-                split="train", 
-                streaming=True,
-                cache_dir=os.environ.get("HF_DATASETS_CACHE")
-            )
+            if subset_name == "sciq":
+                current_dataset_object = load_dataset("allenai/sciq", split="train", streaming=True,cache_dir=os.environ.get("HF_DATASETS_CACHE"))
+            else:
+                current_dataset_object = load_dataset( main_dataset_name, name=subset_name,  split="train", streaming=True,cache_dir=os.environ.get("HF_DATASETS_CACHE"))
+
             print(f"Successfully initiated streaming for {dataset_hf_name}.")
         except Exception as e:
             print(f"Warning: Could not load dataset {dataset_hf_name}. Skipping. Error: {e}")
             continue
+
+
 
         list_of_token_arrays_for_current_dataset = []
         collected_tokens_for_current_dataset = 0
@@ -97,12 +132,12 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
 
             for raw_batch in dataset_iterator:
                 
-                if "text" not in raw_batch:
-                    print(f"Warning: Column 'text' not found in a sample. Skipping this sample.")
-                    # print(f"Sample keys available: {list(sample.keys())}") # Uncomment to see available keys
-                    continue
+               # if "text" not in raw_batch:
+               #     print(f"Warning: Column 'text' not found in a sample. Skipping this sample.")
+               #     # print(f"Sample keys available: {list(sample.keys())}") # Uncomment to see available keys
+               #     continue
 
-                tokenized_batch_output = tokenize_function(raw_batch)
+                tokenized_batch_output = tokenize_function(raw_batch, dataset_hf_name)
                 tokens_in_batch = list(itertools.chain.from_iterable(tokenized_batch_output['input_ids']))
                 if not tokens_in_batch:
                     continue
@@ -120,8 +155,19 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
             
             # Add collected token arrays from the current dataset to the main list
             if list_of_token_arrays_for_current_dataset:
-                all_collected_token_arrays.extend(list_of_token_arrays_for_current_dataset)
-                print(f"Added {len(list_of_token_arrays_for_current_dataset)} token arrays from {dataset_hf_name} to the main collection of {len(all_collected_token_arrays)} arrays.")
+                # Check if this dataset should be duplicated
+                if ("sciq" in dataset_hf_name.lower() or 
+                    "arc-challenge" in dataset_hf_name.lower() or 
+                    "arc-easy" in dataset_hf_name.lower()):
+                    duplicate_times = 10  # Total times to include the data (1 original + 2 duplicates)
+                    print(f"Duplicating {dataset_hf_name} data {duplicate_times} times...")
+                    for i in range(duplicate_times):
+                        all_collected_token_arrays.extend(list_of_token_arrays_for_current_dataset)
+                        print(f"Added copy {i+1}/{duplicate_times} of {len(list_of_token_arrays_for_current_dataset)} token arrays from {dataset_hf_name}")
+                else:
+                    all_collected_token_arrays.extend(list_of_token_arrays_for_current_dataset)
+                
+                print(f"Total arrays in main collection: {len(all_collected_token_arrays)} arrays.")
             else:
                 print(f"No token arrays were collected for {dataset_hf_name} in this iteration.")
 
@@ -144,7 +190,6 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
     del all_collected_token_arrays
     print(f"Total concatenated tokens: {len(all_tokens_np):,}")
 
-    print("Shuffling all collected tokens...")
     #np.random.shuffle(all_tokens_np)
     # FKING stupid shuffled all tokens that are in 1d array
 

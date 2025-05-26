@@ -16,8 +16,13 @@
 # Environment files
 *.env
 
+clean_train_adapted/wandb/
+
+!clean_train_adapted/olmo_core/data/
+
 #  Local training data
 data/
+!olmo_core/data/
 data_local_test/
 wiki_tokens.npy
 

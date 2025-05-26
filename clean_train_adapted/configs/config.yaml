@@ -8,32 +8,32 @@ wandb_project: "all_in_olmo"
 sequence_length: 1024
 # batch_size is a fallback if 'global_batch_size' in the Training Hyperparameters section is not specified.
 # It represents the number of sequences in a global batch (for one optimizer step).
-batch_size: 80
-micro_batch_size: 80 # Number of sequences processed per device in a single forward/backward pass.
-steps: 15
+batch_size: 128
+micro_batch_size: 64 # Number of sequences processed per device in a single forward/backward pass.
+steps: 100
 
 #set to - (minus) to disable evaluation and inference
-evaluation_times: 10 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
-inference_times: 10   # Run inference 2 times (inference_interval = steps/inference_times)
+evaluation_times: 20 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
+inference_times: 20   # Run inference 2 times (inference_interval = steps/inference_times)
 
 # Group Query Attention (GQA)
-n_kv_heads: 4                             # Number of key/value heads for GQA. Must be <= n_heads.
+n_kv_heads: 12                             # Number of key/value heads for GQA. Must be <= n_heads.
                                           # Make sure build_model passes this to TransformerConfig.
 # Layer-Wise Scaling parameters
 
 learning_rate: 0.001
 # INCREASE LEARNING RATE for small runs <5B tokens
 
-fnn_scalars: [1.0, 1.0]
-qkv_scalars: [1.0, 1.0]
+fnn_scalars: [2.0, 5.3]
+qkv_scalars: [0.5,2.0]
 output_scalars: [1.0, 1.0]
 #fnn_scalars: [1.0, 2.0]
 #qkv_scalars: [0.5, 1.0]
 #output_scalars: [0.8, 1.2]
-verbose_scaling: false
+verbose_scaling: True
 
-wandb_name: "test"
-train_data_file: "test.npy"
+wandb_name: "1B_flan80_wiki20"
+train_data_file: "1B_flan80_wiki20.npy"
 
 
 # -----------------------------------------------------------------------------
@@ -58,13 +58,13 @@ data_preparation:
   tokenizer_processing_batch_size: 50  # how many articles/entries to tokenize at once
   dataset_proportions:  
     ### SCIENCE small DATASETS - always included.
-    allenai/ai2_arc/ARC-Challenge: 0.02
-    allenai/ai2_arc/ARC-Easy: 0.02
-    allenai/sciq: 0.02
+    allenai/ai2_arc/ARC-Challenge: 0.4
+    allenai/ai2_arc/ARC-Easy: 0.4
+    allenai/sciq: 0.2
 
-    allenai/dolmino-mix-1124/wiki:   0.8
+    #allenai/dolmino-mix-1124/wiki:   0.2
     #allenai/dolmino-mix-1124/dclm
-    allenai/dolmino-mix-1124/flan: 0.2
+   # allenai/dolmino-mix-1124/flan: 0.8
     #allenai/dolmino-mix-1124/pes2o: 0.8
     
     ### CODE AND MATH DATASETS
@@ -82,18 +82,29 @@ data_preparation:
 #11k rows * 100 tokens = 1.1M tokens
 
 
-### Coding dataset 
-#ds = load_dataset("tokyotech-llm/swallow-code", "exp1-the-stack-v2")
 
-### Math dataset
-#ds = load_dataset("math-ai/AutoMathText", "web-0.50-to-1.00") # or any valid config_name
-#ds = load_dataset("math-ai/AutoMathText", "code-full") # or any valid config_name
-#ds = load_dataset("math-ai/AutoMathText", "arxiv-full") # or any valid config_name
+#ds = load_dataset("allenai/ai2_arc", "ARC-Easy")  # or ARC-Challenge
 
+# {
+#     "answerKey": "B",
+#     "choices": {
+#         "label": ["A", "B", "C", "D"],
+#         "text": ["Shady areas increased.", "Food sources increased.", "Oxygen levels increased.", "Available water increased."]
+#     },
+#     "id": "Mercury_SC_405487",
+#     "question": "One year, the oak trees in a park began producing more acorns than usual. The next year, the population of chipmunks in the park also increased. Which best explains why there were more chipmunks the next year?"
+# }
 
+#ds = load_dataset("allenai/sciq")
 
-
-
+#{
+#    "correct_answer": "coriolis effect",
+#    "distractor1": "muon effect",
+#    "distractor2": "centrifugal effect",
+#    "distractor3": "tropical effect",
+#    "question": "What phenomenon makes global winds blow northeast to southwest or the reverse in the northern hemisphere and northwest to southeast or the reverse in the southern hemisphere?",
+#    "support": "\"Without Coriolis Effect the global winds would blow north to south or south to north. But Coriolis makes them blow northeast to..."
+#}
 
 
 
@@ -168,10 +179,6 @@ n_heads: 12                               # Number of attention heads
 head_dim: 64                              # Dimensionality of each attention head (global_dim / n_heads)
 
 
-
-
-
-
 # -----------------------------------------------------------------------------
 # FSDP and Activation Checkpointing
 # -----------------------------------------------------------------------------
@@ -183,9 +190,35 @@ head_dim: 64                              # Dimensionality of each attention hea
 # -----------------------------------------------------------------------------
 # Inference Callback
 # -----------------------------------------------------------------------------
-#inference_interval: 20                     # Run inference every N global steps
-inference_prompt: "The universe is "
+inference_mode: "all"  # Options: "cycle", "all", "random"
+                        # "cycle": Use a different prompt each time
+                        # "all": Run inference on all prompts each time
+                        # "random": Pick a random prompt each time
 
+inference_prompts:
+  - "Once upon a time in a distant galaxy, there lived a curious scientist who discovered that "
+  - "The most important scientific breakthrough of the 21st century was "
+  - "Climate change can be addressed by "
+  - "In the future, artificial intelligence will "
+  - "The key to solving world hunger is "
+  - "Space exploration is important because "
+  - "The biggest challenge facing humanity today is "
+  - "Education should focus on teaching students "
+  - "The role of government in society should be "
+  - "Technology has changed our lives by "
+  - "The most effective way to reduce poverty is "
+  - "Healthcare systems can be improved through "
+  - "The future of renewable energy depends on "
+  - "Social media has impacted society by "
+  - "The importance of biodiversity lies in "
+  - "Economic inequality can be reduced by "
+  - "The next major technological innovation will be "
+  - "Cultural diversity enriches society because "
+  - "The role of art in human development is "
+  - "Mental health awareness is crucial because "
+
+# Alternative: Keep the old single prompt for backward compatibility
+# inference_prompt: "Once upon a time in a distant galaxy, there lived a curious scientist who discovered that "
 
 # global_dim: 768
 # head_dim: 64
