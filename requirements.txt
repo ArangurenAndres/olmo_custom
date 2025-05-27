@@ -1,6 +1,7 @@
 aiohappyeyeballs
 aiohttp
 aiosignal
+ai2-olmo-core
 alembic
 annotated-types
 antlr4-python3-runtime

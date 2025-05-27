@@ -6,6 +6,7 @@ from transformers import AutoTokenizer
 from olmo_core.data import (
     TokenizerConfig, NumpyDatasetConfig, NumpyDataLoaderConfig, NumpyDatasetType
 )
+from olmo_core.distributed.utils import get_rank, get_world_size, is_distributed
 
 def prepare_data(data_dir, total_sequences, sequence_length, use_small_dataset=True):
     os.makedirs(data_dir, exist_ok=True)
@@ -51,3 +52,24 @@ def prepare_data(data_dir, total_sequences, sequence_length, use_small_dataset=T
     loader = loader_config.build(dataset)
 
     return loader, tokenizer_config
+
+def create_distributed_dataloader(dataset, config):
+    """Create a distributed-aware dataloader."""
+    
+    # Calculate global and per-rank batch sizes
+    global_batch_size = config["batch_size"] * config["sequence_length"]
+    world_size = get_world_size() if is_distributed() else 1
+    
+    # Ensure batch size is divisible by world size
+    assert global_batch_size % world_size == 0, \
+        f"Global batch size {global_batch_size} must be divisible by world size {world_size}"
+    
+    dataloader_config = NumpyDataLoaderConfig(
+        global_batch_size=global_batch_size,
+        seed=config.get("seed", 42),
+        num_workers=config.get("num_workers", 8),
+        prefetch_factor=2,
+        persistent_workers=True,
+    )
+    
+    return dataloader_config.build(dataset)

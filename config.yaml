@@ -10,9 +10,10 @@ train_data_file: "4B.npy"
 sequence_length: 1024
 # batch_size is a fallback if 'global_batch_size' in the Training Hyperparameters section is not specified.
 # It represents the number of sequences in a global batch (for one optimizer step).
-batch_size: 64
-micro_batch_size: 64 # Number of sequences processed per device in a single forward/backward pass.
-steps: 100
+# Batch size configuration
+batch_size: 32  # Global batch size across all GPUs
+rank_microbatch_size: 2048  # Tokens per GPU per microbatch
+steps: 50
 
 #set to - (minus) to disable evaluation and inference
 evaluation_times: 1 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
@@ -34,6 +35,22 @@ output_scalars: [1.0, 1.0]
 #output_scalars: [0.8, 1.2]
 verbose_scaling: True
 
+# config.yaml additions
+distributed:
+  backend: "nccl"
+  timeout_minutes: 30
+  
+
+# FSDP specific
+fsdp:
+  param_dtype: "bfloat16"
+  reduce_dtype: "float32"
+  wrapping_strategy: "by_block"
+  cpu_offload: false
+  
+# Checkpointing
+save_interval: 100
+checkpoint_async: true
 
 
 # -----------------------------------------------------------------------------

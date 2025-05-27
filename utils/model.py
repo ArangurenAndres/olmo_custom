@@ -5,6 +5,13 @@ from olmo_core.train.train_module.transformer import TransformerTrainModuleConfi
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig, TransformerActivationCheckpointingMode
 
+from olmo_core.train.train_module.transformer import TransformerTrainModuleConfig
+from olmo_core.train.train_module.transformer.config import TransformerDataParallelConfig
+from olmo_core.distributed.parallel import DataParallelType
+
+from olmo_core.distributed.utils import is_distributed, get_rank, get_world_size
+
+
 def build_model(vocab_size, device, config):
     sequence_length = config["sequence_length"]
     n_kv_heads = config["n_kv_heads"]
@@ -52,3 +59,61 @@ def build_model(vocab_size, device, config):
 
     train_module = train_module_config.build(model=model, device=device)
     return model, train_module
+
+def build_train_module_with_fsdp(model, config):
+    # Define optimizer configuration
+    optimizer_config = AdamWConfig(
+        lr=config.get("learning_rate", 1e-4),
+        betas=(config.get("beta1", 0.9), config.get("beta2", 0.95)),
+        eps=config.get("eps", 1e-8),
+        weight_decay=config.get("weight_decay", 0.1),
+        group_overrides=[
+            OptimGroupOverride(
+                params=["bias", "LayerNorm.weight", "layer_norm.weight"],
+                weight_decay=0.0
+            )
+        ]
+    )
+    
+    # Configure FSDP
+    dp_config = TransformerDataParallelConfig(
+        name=DataParallelType.fsdp,
+        param_dtype=config.get("param_dtype", None),
+        reduce_dtype=config.get("reduce_dtype", None),
+        wrapping_strategy="by_block",
+        prefetch_factor=2,
+        limit_all_gathers=True,
+    )
+    
+    train_module_config = TransformerTrainModuleConfig(
+        model=model,
+        optimizer=optimizer_config,
+        dp_config=dp_config,
+        max_sequence_length=config["sequence_length"],
+        rank_microbatch_size=config.get("rank_microbatch_size", 2048),
+    )
+    
+    return train_module_config.build()
+
+# def create_distributed_trainer(train_module, dataloader, config):
+#     # Configure trainer for distributed training
+#     trainer_config = TrainerConfig(
+#         save_folder=config["save_dir"],
+#         save_overwrite=True,
+#         max_duration=Duration.steps(config["steps"]),
+        
+#         # Distributed-specific settings
+#         save_interval=config.get("save_interval", 100),
+#         log_interval=config.get("log_interval", 10),
+#         metrics_collect_interval=config.get("metrics_interval", 10),
+        
+#         # Enable async checkpointing for better performance
+#         async_bookkeeping=True,
+#     )
+    
+#     # Add callbacks (only on rank 0 for logging)
+#     if not is_distributed() or get_rank() == 0:
+#         # Add your inference callback, wandb, etc.
+#         pass
+    
+#     return trainer_config.build(train_module, dataloader)
