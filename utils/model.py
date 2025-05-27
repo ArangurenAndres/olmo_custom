@@ -75,19 +75,19 @@ def build_train_module_with_fsdp(model, config):
         ]
     )
     
-    # Configure FSDP
+    # Configure FSDP - Remove unsupported parameters
     dp_config = TransformerDataParallelConfig(
         name=DataParallelType.fsdp,
         param_dtype=config.get("param_dtype", None),
         reduce_dtype=config.get("reduce_dtype", None),
         wrapping_strategy="by_block",
         prefetch_factor=2,
-        limit_all_gathers=True,
+        # Remove 'limit_all_gathers' - not supported by TransformerDataParallelConfig
     )
     
     train_module_config = TransformerTrainModuleConfig(
         model=model,
-        optim=optimizer_config,  # Use 'optim' not 'optimizer'
+        optim=optimizer_config,
         dp_config=dp_config,
         max_sequence_length=config["sequence_length"],
         rank_microbatch_size=config.get("rank_microbatch_size", 2048),
