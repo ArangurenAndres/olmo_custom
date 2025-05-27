@@ -22,7 +22,7 @@ import time
 import yaml
 import shutil
 
-from utils.model import build_model, build_train_module_with_fsdp, create_distributed_trainer
+from utils.model import build_model, build_train_module_with_fsdp
 from datetime import timedelta
 from data_utils.load_dataset import load_prepared_dataset
 from olmo_core.data import NumpyDataLoaderConfig
