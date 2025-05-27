@@ -75,11 +75,11 @@ def build_train_module_with_fsdp(model, config):
         ]
     )
     
-    # Configure FSDP - Remove unsupported parameters
+    # Configure FSDP - Provide proper default values for dtype parameters
     dp_config = TransformerDataParallelConfig(
         name=DataParallelType.fsdp,
-        param_dtype=config.get("param_dtype", None),
-        reduce_dtype=config.get("reduce_dtype", None),
+        param_dtype=DType.from_string(config.get("param_dtype", "bfloat16")) if config.get("param_dtype") else None,
+        reduce_dtype=DType.from_string(config.get("reduce_dtype", "float32")),  # Always provide a default
         wrapping_strategy="by_block",
         prefetch_factor=2,
         # Remove 'limit_all_gathers' - not supported by TransformerDataParallelConfig
