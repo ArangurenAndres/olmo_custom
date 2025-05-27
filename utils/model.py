@@ -86,14 +86,14 @@ def build_train_module_with_fsdp(model, config):
     )
     
     train_module_config = TransformerTrainModuleConfig(
-        model=model,
         optim=optimizer_config,
         dp_config=dp_config,
         max_sequence_length=config["sequence_length"],
         rank_microbatch_size=config.get("rank_microbatch_size", 2048),
     )
     
-    return train_module_config.build()
+    # Pass model to build() method, not to constructor
+    return train_module_config.build(model=model)
 
 # def create_distributed_trainer(train_module, dataloader, config):
 #     # Configure trainer for distributed training
