@@ -75,11 +75,11 @@ def build_train_module_with_fsdp(model, config):
         ]
     )
     
-    # Configure FSDP - Provide proper default values for dtype parameters
+    # Configure FSDP - Use DType enum values directly
     dp_config = TransformerDataParallelConfig(
         name=DataParallelType.fsdp,
-        param_dtype=DType.from_string(config.get("param_dtype", "bfloat16")) if config.get("param_dtype") else None,
-        reduce_dtype=DType.from_string(config.get("reduce_dtype", "float32")),  # Always provide a default
+        param_dtype=DType.bfloat16 if config.get("param_dtype", "bfloat16") == "bfloat16" else None,
+        reduce_dtype=DType.float32,  # Use DType enum directly
         wrapping_strategy="by_block",
         prefetch_factor=2,
         # Remove 'limit_all_gathers' - not supported by TransformerDataParallelConfig
