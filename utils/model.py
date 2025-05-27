@@ -64,13 +64,13 @@ def build_train_module_with_fsdp(model, config):
     # Define optimizer configuration
     optimizer_config = AdamWConfig(
         lr=config.get("learning_rate", 1e-4),
-        betas=(config.get("beta1", 0.9), config.get("beta2", 0.95)),
+        betas=tuple(config.get("betas", [0.9, 0.95])),
         eps=config.get("eps", 1e-8),
         weight_decay=config.get("weight_decay", 0.1),
         group_overrides=[
             OptimGroupOverride(
                 params=["bias", "LayerNorm.weight", "layer_norm.weight"],
-                weight_decay=0.0
+                opts=dict(weight_decay=0.0)  # Use opts dict instead of direct parameter
             )
         ]
     )
@@ -87,7 +87,7 @@ def build_train_module_with_fsdp(model, config):
     
     train_module_config = TransformerTrainModuleConfig(
         model=model,
-        optimizer=optimizer_config,
+        optim=optimizer_config,  # Use 'optim' not 'optimizer'
         dp_config=dp_config,
         max_sequence_length=config["sequence_length"],
         rank_microbatch_size=config.get("rank_microbatch_size", 2048),
