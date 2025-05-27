@@ -1,3 +1,0 @@
-"""
-OLMo custom training package.
-""" 

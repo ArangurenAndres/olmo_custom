@@ -5,15 +5,16 @@ from olmo_core.train.train_module.transformer import TransformerTrainModuleConfi
 from olmo_core.optim import AdamWConfig, OptimGroupOverride
 from olmo_core.train.train_module.transformer.config import TransformerActivationCheckpointingConfig, TransformerActivationCheckpointingMode
 
-def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas):
+def build_model(vocab_size, device, config):
+    sequence_length = config["sequence_length"]
+    n_kv_heads = config["n_kv_heads"]
+
     model_config = TransformerConfig.olmo2_190M(
         vocab_size=vocab_size,
         dtype=DType.bfloat16 if device.type == "cuda" else DType.float32,
-        init_method=InitMethod.normal,
-        #This activates GQA: mulitple query heads will share the same key value heads
-        # If n_heads is larger than n_kv_heads, then GQA is used
-        # To enable GQA set nkv_heads to a smaller number than n_heads
-        n_kv_heads=3
+        n_kv_heads=n_kv_heads,
+        #use_flash=True,
+        #init_method=InitMethod.normal   # GIVES AN ERROR IF SET   
     )
 
     model = model_config.build(init_device=device)
@@ -21,23 +22,29 @@ def build_model(vocab_size, device, sequence_length, lr, weight_decay, betas):
         mode=TransformerActivationCheckpointingMode.full
     )
 
-    with torch.no_grad():
-        model.embeddings.weight[0].zero_()
-        if hasattr(model.lm_head, "w_out") and model.lm_head.w_out.bias is not None:
-            model.lm_head.w_out.bias[0] = -100.0
+#    with torch.no_grad():
+ #       model.embeddings.weight[0].zero_()
+ #       if hasattr(model.lm_head, "w_out") and model.lm_head.w_out.bias is not None:
+ #           model.lm_head.w_out.bias[0] = -100.0
+
+    learning_rate = config["learning_rate"]
+    weight_decay = config["weight_decay"]
+    betas = tuple(config["betas"])
 
     optim_config = AdamWConfig(
-        lr=lr,
+        lr=learning_rate,
         weight_decay=weight_decay,
-        betas=tuple(betas),
+        betas=betas,
         fused=False,
         group_overrides=[
             OptimGroupOverride(params=["embeddings.weight"], opts=dict(weight_decay=0.0))
         ]
     )
 
+    rank_microbatch_size_in_tokens = config["micro_batch_size"] * sequence_length
+
     train_module_config = TransformerTrainModuleConfig(
-        rank_microbatch_size=sequence_length,
+        rank_microbatch_size=rank_microbatch_size_in_tokens,
         max_sequence_length=sequence_length,
         optim=optim_config,
         compile_model=False
