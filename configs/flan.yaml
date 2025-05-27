@@ -52,7 +52,7 @@ save_dir: checkpoints
 data_preparation:
   output_file_name: "1B_flan80_wiki20.npy" # Name of the tokenized file within data.data_dir
   validation_output_file_name: "c4_validation.npy"
-  validation: True
+  validation: False
   #tokenizer_name: "allenai/gpt-neox-olmo-dolma-v1_5" # assuming we're not changin tokenizer
   #hf_dataset_name: "wikipedia"
   #hf_dataset_subset: "20220301.en"
