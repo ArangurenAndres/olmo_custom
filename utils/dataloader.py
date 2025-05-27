@@ -64,21 +64,14 @@ def create_distributed_dataloader(dataset, config):
     assert global_batch_size % world_size == 0, \
         f"Global batch size {global_batch_size} must be divisible by world size {world_size}"
     
-    # Get distributed ranks
-    dp_rank = get_rank() if is_distributed() else 0
-    dp_world_size = world_size
-    
     dataloader_config = NumpyDataLoaderConfig(
         global_batch_size=global_batch_size,
         seed=config.get("seed", 42),
         num_workers=config.get("num_workers", 8),
         prefetch_factor=2,
-        # Remove persistent_workers - not supported by NumpyDataLoaderConfig
     )
     
-    # Build the dataloader with distributed parameters
-    return dataloader_config.build(
-        dataset, 
-        dp_world_size=dp_world_size,
-        dp_rank=dp_rank
-    )
+    # Build the dataloader - let it automatically handle distributed settings
+    # The build() method will internally call get_world_size() and get_rank()
+    # to determine dp_world_size and dp_rank
+    return dataloader_config.build(dataset)
