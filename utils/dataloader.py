@@ -56,7 +56,7 @@ def prepare_data(data_dir, total_sequences, sequence_length, use_small_dataset=T
 def create_distributed_dataloader(dataset, config):
     """Create a distributed-aware dataloader."""
     
-    # Calculate global and per-rank batch sizes
+    # Calculate global batch size in tokens
     global_batch_size = config["batch_size"] * config["sequence_length"]
     world_size = get_world_size() if is_distributed() else 1
     
@@ -64,12 +64,21 @@ def create_distributed_dataloader(dataset, config):
     assert global_batch_size % world_size == 0, \
         f"Global batch size {global_batch_size} must be divisible by world size {world_size}"
     
+    # Get distributed ranks
+    dp_rank = get_rank() if is_distributed() else 0
+    dp_world_size = world_size
+    
     dataloader_config = NumpyDataLoaderConfig(
         global_batch_size=global_batch_size,
         seed=config.get("seed", 42),
         num_workers=config.get("num_workers", 8),
         prefetch_factor=2,
-        persistent_workers=True,
+        # Remove persistent_workers - not supported by NumpyDataLoaderConfig
     )
     
-    return dataloader_config.build(dataset)
+    # Build the dataloader with distributed parameters
+    return dataloader_config.build(
+        dataset, 
+        dp_world_size=dp_world_size,
+        dp_rank=dp_rank
+    )
