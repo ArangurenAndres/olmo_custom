@@ -43,7 +43,7 @@ from olmo_core.data import NumpyDatasetConfig, NumpyDatasetType
 from utils.load_config import load_config
 
 from olmo_core.train import prepare_training_environment, teardown_training_environment
-from olmo_core.distributed.utils import is_distributed, get_rank, get_world_size
+from olmo_core.distributed.utils import is_distributed, get_rank, get_world_size, dist
 
 def main():
     prepare_training_environment(
@@ -203,10 +203,18 @@ def main():
         if lm_eval_callback_config:
             trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
         
+        # Add distributed barrier to synchronize all ranks after callback setup
+        if is_distributed():
+            dist.barrier()
+            
         # Build trainer
         trainer = trainer_config.build(train_module=train_module, data_loader=dataloader)
     
         print(f"Training for {config['steps']} steps on device: {device}\n")
+        
+        # Add another barrier before starting training
+        if is_distributed():
+            dist.barrier()
         trainer.fit()
         print("\n✅ Training complete")
         
