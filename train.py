@@ -198,10 +198,10 @@ def main():
             trainer_config = trainer_config.with_callback("wandb", wandb_cb)
         if inference_cb:
             trainer_config = trainer_config.with_callback("inference", inference_cb)
-        if downstream_eval_cb_config:
-            trainer_config = trainer_config.with_callback("downstream_eval", downstream_eval_cb_config)
-        if lm_eval_callback_config:
-            trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
+        # if downstream_eval_cb_config:
+        #     trainer_config = trainer_config.with_callback("downstream_eval", downstream_eval_cb_config)
+        # if lm_eval_callback_config:
+        #     trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
         
         # Add distributed barrier to synchronize all ranks after callback setup
         if is_distributed():
