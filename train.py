@@ -43,7 +43,8 @@ from olmo_core.data import NumpyDatasetConfig, NumpyDatasetType
 from utils.load_config import load_config
 
 from olmo_core.train import prepare_training_environment, teardown_training_environment
-from olmo_core.distributed.utils import is_distributed, get_rank, get_world_size, dist
+from olmo_core.distributed.utils import is_distributed, get_rank, get_world_size
+import torch.distributed as dist
 
 def main():
     prepare_training_environment(
