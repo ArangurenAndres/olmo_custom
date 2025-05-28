@@ -69,8 +69,8 @@ def build_train_module_with_fsdp(model, config):
         weight_decay=config.get("weight_decay", 0.1),
         group_overrides=[
             OptimGroupOverride(
-                params=["bias", "LayerNorm.weight", "layer_norm.weight"],
-                opts=dict(weight_decay=0.0)  # Use opts dict instead of direct parameter
+                params=["embeddings.weight"],  # Fixed: Only embeddings.weight pattern
+                opts=dict(weight_decay=0.0)
             )
         ]
     )
