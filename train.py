@@ -161,23 +161,23 @@ def main():
                 log_interval=5,
                 enabled=True
             )
+            lm_eval_callback_config = None
+            # lm_eval_dataset_config = NumpyDatasetConfig(
+            #     paths=[config["data_dir"] + "/c4_validation.npy"],
+            #     tokenizer=tokenizer_config,
+            #     sequence_length=config["sequence_length"],
+            #     name=NumpyDatasetType.padded_fsl,
+            #     work_dir=work_dir,
+            #     metadata=[{"label": "c4_validation_custom"}]
+            # )
 
-            lm_eval_dataset_config = NumpyDatasetConfig(
-                paths=[config["data_dir"] + "/c4_validation.npy"],
-                tokenizer=tokenizer_config,
-                sequence_length=config["sequence_length"],
-                name=NumpyDatasetType.padded_fsl,
-                work_dir=work_dir,
-                metadata=[{"label": "c4_validation_custom"}]
-            )
-
-            lm_eval_callback_config = LMEvaluatorCallbackConfig(
-                eval_dataset=lm_eval_dataset_config,
-                eval_interval=config["steps"] / config.get("evaluation_times", 1),
-                eval_on_startup=True,
-                log_interval=5,
-                enabled=True
-            )
+            # lm_eval_callback_config = LMEvaluatorCallbackConfig(
+            #     eval_dataset=lm_eval_dataset_config,
+            #     eval_interval=config["steps"] / config.get("evaluation_times", 1),
+            #     eval_on_startup=True,
+            #     log_interval=5,
+            #     enabled=True
+            # )
         else:
             downstream_eval_cb_config = None
             lm_eval_callback_config = None
