@@ -156,15 +156,18 @@ def main():
                 # skip_pre_train=is_distributed()
             )
             print(f"Rank {get_rank()}: Succesfully created Inference Callback")
-            downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
-                tasks=downstream_eval_tasks,
-                tokenizer=tokenizer_config,
-                eval_interval=config["steps"]/config["evaluation_times"],
-                eval_on_startup=False,
-                log_interval=5,
-                enabled=True
-            )
-            print(f"Rank {get_rank()}: Succesfully created Eval Callback")
+
+            downstream_eval_cb_config = None
+            lm_eval_callback_config = None
+            # downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
+            #     tasks=downstream_eval_tasks,
+            #     tokenizer=tokenizer_config,
+            #     eval_interval=config["steps"]/config["evaluation_times"],
+            #     eval_on_startup=False,
+            #     log_interval=5,
+            #     enabled=True
+            # )
+            # print(f"Rank {get_rank()}: Succesfully created Eval Callback")
             # lm_eval_callback_config = None  # Temporarily disabled
             
             print(f"Rank {get_rank()}: Callbacks created successfully")
@@ -229,18 +232,22 @@ def main():
         )
 
         # Add callbacks only on rank 0
-        if wandb_cb:
-            trainer_config = trainer_config.with_callback("wandb", wandb_cb)
-            print(f"Rank {get_rank()}: Succesfully added WandB Callback")
-        if inference_cb:
-            trainer_config = trainer_config.with_callback("inference", inference_cb)
-            print(f"Rank {get_rank()}: Succesfully added Inference Callback")
-        if downstream_eval_cb_config:
-            trainer_config = trainer_config.with_callback("downstream_eval", downstream_eval_cb_config)
-            print(f"Rank {get_rank()}: Succesfully added Downstream Eval Callback")
-        if lm_eval_callback_config:
-            trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
-            print(f"Rank {get_rank()}: Succesfully added LM Eval Callback")
+        try:
+            if wandb_cb:
+                trainer_config = trainer_config.with_callback("wandb", wandb_cb)
+                print(f"Rank {get_rank()}: Successfully added WandB Callback")
+            if inference_cb:
+                trainer_config = trainer_config.with_callback("inference", inference_cb)
+                print(f"Rank {get_rank()}: Successfully added Inference Callback")
+            if downstream_eval_cb_config:
+                trainer_config = trainer_config.with_callback("downstream_eval", downstream_eval_cb_config)
+                print(f"Rank {get_rank()}: Successfully added Downstream Eval Callback")
+            if lm_eval_callback_config:
+                trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
+                print(f"Rank {get_rank()}: Successfully added LM Eval Callback")
+        except Exception as e:
+            print(f"Rank {get_rank()}: Error adding callbacks: {e}")
+            raise
         
         # Enhanced logging before trainer build
         if is_distributed():
