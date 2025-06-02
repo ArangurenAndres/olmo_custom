@@ -117,6 +117,13 @@ def main():
                 config=config
             )
 
+        # Add distributed barrier AFTER all initialization
+        if is_distributed():
+            print(f"Rank {get_rank()}: Finished initialization, synchronizing...")
+            dist.barrier()
+            print(f"Rank {get_rank()}: All ranks synchronized after initialization")
+
+        if not is_distributed() or get_rank() == 0:
             wandb_cb = WandBCallback(
                 project=config["wandb_project"],
                 name=f"{config['wandb_name']}-{timestamp}",
