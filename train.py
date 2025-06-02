@@ -165,7 +165,7 @@ def main():
                 enabled=True
             )
             
-            lm_eval_callback_config = None  # Temporarily disabled
+            # lm_eval_callback_config = None  # Temporarily disabled
             
             print(f"Rank {get_rank()}: Callbacks created successfully")
         else:
