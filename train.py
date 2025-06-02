@@ -231,12 +231,16 @@ def main():
         # Add callbacks only on rank 0
         if wandb_cb:
             trainer_config = trainer_config.with_callback("wandb", wandb_cb)
+            print(f"Rank {get_rank()}: Succesfully added WandB Callback")
         if inference_cb:
             trainer_config = trainer_config.with_callback("inference", inference_cb)
+            print(f"Rank {get_rank()}: Succesfully added Inference Callback")
         if downstream_eval_cb_config:
             trainer_config = trainer_config.with_callback("downstream_eval", downstream_eval_cb_config)
+            print(f"Rank {get_rank()}: Succesfully added Downstream Eval Callback")
         if lm_eval_callback_config:
             trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
+            print(f"Rank {get_rank()}: Succesfully added LM Eval Callback")
         
         # Enhanced logging before trainer build
         if is_distributed():
