@@ -152,29 +152,31 @@ def main():
             "mmlu_stem", "basic_arithmetic", "gsm8k_gold_bpb_5shot"
         ]
 
+        # Create inference callback (only on rank 0) - DISABLE pre_train inference for distributed
         if not is_distributed() or get_rank() == 0:
-            downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
-                tasks=downstream_eval_tasks,
-                tokenizer=tokenizer_config,
-                eval_interval=config["steps"]/config["evaluation_times"],
-                eval_on_startup=True,
-                log_interval=5,
-                enabled=True
+            inference_cb = InferenceCallback(
+                model=model,
+                tokenizer_config=tokenizer_config,
+                prompts=inference_prompts,
+                interval=config["steps"]/config["inference_times"],
+                inference_mode=inference_mode,
+                skip_pre_train=is_distributed()  # Skip pre_train inference in distributed mode
             )
-            lm_eval_callback_config = None
-            # lm_eval_dataset_config = NumpyDatasetConfig(
-            #     paths=[config["data_dir"] + "/c4_validation.npy"],
-            #     tokenizer=tokenizer_config,
-            #     sequence_length=config["sequence_length"],
-            #     name=NumpyDatasetType.padded_fsl,
-            #     work_dir=work_dir,
-            #     metadata=[{"label": "c4_validation_custom"}]
-            # )
+        else:
+            inference_cb = None
 
-            # lm_eval_callback_config = LMEvaluatorCallbackConfig(
-            #     eval_dataset=lm_eval_dataset_config,
-            #     eval_interval=config["steps"] / config.get("evaluation_times", 1),
-            #     eval_on_startup=True,
+        # Temporarily disable downstream evaluation to isolate the issue
+        if not is_distributed() or get_rank() == 0:
+            # Disable evaluation during debugging
+            downstream_eval_cb_config = None
+            lm_eval_callback_config = None
+            
+            # Original evaluation config (commented out for debugging)
+            # downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
+            #     tasks=downstream_eval_tasks,
+            #     tokenizer=tokenizer_config,
+            #     eval_interval=config["steps"]/config["evaluation_times"],
+            #     eval_on_startup=False,  # Disable eval_on_startup to avoid blocking
             #     log_interval=5,
             #     enabled=True
             # )
@@ -204,7 +206,7 @@ def main():
         # if lm_eval_callback_config:
         #     trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
         
-        # Add distributed barrier to synchronize all ranks after callback setup
+        # Enhanced logging before trainer build
         if is_distributed():
             print(f"Rank {get_rank()}: About to synchronize before trainer build")
             dist.barrier()
@@ -217,16 +219,23 @@ def main():
     
         print(f"Training for {config['steps']} steps on device: {device}\n")
         
-        # Add another barrier before starting training
+        # Enhanced logging before training starts
         if is_distributed():
-            print(f"Rank {get_rank()}: About to synchronize before trainer build")
+            print(f"Rank {get_rank()}: About to start training with {len(trainer.callbacks)} callbacks")
             dist.barrier()
-            print(f"Rank {get_rank()}: Synchronized, building trainer")
+            print(f"Rank {get_rank()}: All ranks ready, starting training")
         else:
-            print("Single process: building trainer")
+            print("Single process: starting training")
 
-        trainer.fit()
-        print("\n✅ Training complete")
+        # Start training with error handling
+        try:
+            trainer.fit()
+            print("\n✅ Training complete")
+        except Exception as e:
+            print(f"\n❌ Training failed: {e}")
+            if is_distributed():
+                print(f"Rank {get_rank()}: Training error occurred")
+            raise
         
         # Close wandb only on rank 0
         if not is_distributed() or get_rank() == 0:
