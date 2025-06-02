@@ -123,13 +123,21 @@ def main():
             dist.barrier()
             print(f"Rank {get_rank()}: All ranks synchronized after initialization")
 
+        # Get inference prompts and mode from config
+        inference_prompts = config.get("inference_prompts", 
+                                     [config.get("inference_prompt", "Hello world")])
+        inference_mode = config.get("inference_mode", "all")
+
         downstream_eval_tasks = [
             "arc_challenge", "arc_easy", "boolq", "commonsense_qa",
             "hellaswag", "openbook_qa", "piqa", "social_iqa", "sciq",
             "mmlu_stem", "basic_arithmetic", "gsm8k_gold_bpb_5shot"
         ]
 
+        # Create callbacks AFTER variable definitions but BEFORE next barrier
         if not is_distributed() or get_rank() == 0:
+            print(f"Rank {get_rank()}: Creating callbacks...")
+            
             wandb_cb = WandBCallback(
                 project=config["wandb_project"],
                 name=f"{config['wandb_name']}-{timestamp}",
@@ -138,32 +146,36 @@ def main():
                 cancel_check_interval=10,
                 config=config
             )
+            
             inference_cb = InferenceCallback(
                 model=model,
                 tokenizer_config=tokenizer_config,
                 prompts=inference_prompts,
                 interval=config["steps"]/config["inference_times"],
                 inference_mode=inference_mode,
-                skip_pre_train=is_distributed()  # Skip pre_train inference in distributed mode
+                skip_pre_train=is_distributed()
             )
+            
             downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
                 tasks=downstream_eval_tasks,
                 tokenizer=tokenizer_config,
                 eval_interval=config["steps"]/config["evaluation_times"],
-                eval_on_startup=False,  # Disable eval_on_startup to avoid blocking
+                eval_on_startup=False,
                 log_interval=5,
                 enabled=True
             )
+            
+            lm_eval_callback_config = None  # Temporarily disabled
+            
+            print(f"Rank {get_rank()}: Callbacks created successfully")
         else:
+            print(f"Rank {get_rank()}: Skipping callback creation (non-zero rank)")
             wandb_cb = None
             inference_cb = None
             downstream_eval_cb_config = None
             lm_eval_callback_config = None
 
-        # Get inference prompts and mode from config
-        inference_prompts = config.get("inference_prompts", 
-                                     [config.get("inference_prompt", "Hello world")])
-        inference_mode = config.get("inference_mode", "all")
+
 
         # Evaluation tasks (only on rank 0)
 
