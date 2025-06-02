@@ -123,6 +123,12 @@ def main():
             dist.barrier()
             print(f"Rank {get_rank()}: All ranks synchronized after initialization")
 
+        downstream_eval_tasks = [
+            "arc_challenge", "arc_easy", "boolq", "commonsense_qa",
+            "hellaswag", "openbook_qa", "piqa", "social_iqa", "sciq",
+            "mmlu_stem", "basic_arithmetic", "gsm8k_gold_bpb_5shot"
+        ]
+
         if not is_distributed() or get_rank() == 0:
             wandb_cb = WandBCallback(
                 project=config["wandb_project"],
@@ -132,35 +138,6 @@ def main():
                 cancel_check_interval=10,
                 config=config
             )
-        else:
-            wandb_cb = None
-
-        # Get inference prompts and mode from config
-        inference_prompts = config.get("inference_prompts", 
-                                     [config.get("inference_prompt", "Hello world")])
-        inference_mode = config.get("inference_mode", "all")
-
-        # Create inference callback (only on rank 0)
-        # if not is_distributed() or get_rank() == 0:
-        #     inference_cb = InferenceCallback(
-        #         model=model,
-        #         tokenizer_config=tokenizer_config,
-        #         prompts=inference_prompts,
-        #         interval=config["steps"]/config["inference_times"],
-        #         inference_mode=inference_mode
-        #     )
-        # else:
-        #     inference_cb = None
-
-        # Evaluation tasks (only on rank 0)
-        downstream_eval_tasks = [
-            "arc_challenge", "arc_easy", "boolq", "commonsense_qa",
-            "hellaswag", "openbook_qa", "piqa", "social_iqa", "sciq",
-            "mmlu_stem", "basic_arithmetic", "gsm8k_gold_bpb_5shot"
-        ]
-
-        # Create inference callback (only on rank 0) - DISABLE pre_train inference for distributed
-        if not is_distributed() or get_rank() == 0:
             inference_cb = InferenceCallback(
                 model=model,
                 tokenizer_config=tokenizer_config,
@@ -169,33 +146,63 @@ def main():
                 inference_mode=inference_mode,
                 skip_pre_train=is_distributed()  # Skip pre_train inference in distributed mode
             )
+            downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
+                tasks=downstream_eval_tasks,
+                tokenizer=tokenizer_config,
+                eval_interval=config["steps"]/config["evaluation_times"],
+                eval_on_startup=False,  # Disable eval_on_startup to avoid blocking
+                log_interval=5,
+                enabled=True
+            )
         else:
+            wandb_cb = None
             inference_cb = None
-        
-                # Add barrier AFTER callback creation to synchronize all ranks
+            downstream_eval_cb_config = None
+            lm_eval_callback_config = None
+
+        # Get inference prompts and mode from config
+        inference_prompts = config.get("inference_prompts", 
+                                     [config.get("inference_prompt", "Hello world")])
+        inference_mode = config.get("inference_mode", "all")
+
+        # Evaluation tasks (only on rank 0)
+
+
+        # # Create inference callback (only on rank 0) - DISABLE pre_train inference for distributed
+        # if not is_distributed() or get_rank() == 0:
+        #     inference_cb = InferenceCallback(
+        #         model=model,
+        #         tokenizer_config=tokenizer_config,
+        #         prompts=inference_prompts,
+        #         interval=config["steps"]/config["inference_times"],
+        #         inference_mode=inference_mode,
+        #         skip_pre_train=is_distributed()  # Skip pre_train inference in distributed mode
+        #     )
+        # else:
+        #     inference_cb = None
+
+        # # Temporarily disable downstream evaluation to isolate the issue
+        # if not is_distributed() or get_rank() == 0:
+        #     # Disable evaluation during debugging
+            
+        #     # Original evaluation config (commented out for debugging)
+        #     downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
+        #         tasks=downstream_eval_tasks,
+        #         tokenizer=tokenizer_config,
+        #         eval_interval=config["steps"]/config["evaluation_times"],
+        #         eval_on_startup=False,  # Disable eval_on_startup to avoid blocking
+        #         log_interval=5,
+        #         enabled=True
+        #     )
+        # else:
+        #     downstream_eval_cb_config = None
+        #     lm_eval_callback_config = None
+    
+        # Add barrier AFTER callback creation to synchronize all ranks
         if is_distributed():
             print(f"Rank {get_rank()}: About to synchronize after callback creation")
             dist.barrier()
             print(f"Rank {get_rank()}: All ranks synchronized after callback creation")
-
-        # Temporarily disable downstream evaluation to isolate the issue
-        if not is_distributed() or get_rank() == 0:
-            # Disable evaluation during debugging
-            downstream_eval_cb_config = None
-            lm_eval_callback_config = None
-            
-            # Original evaluation config (commented out for debugging)
-            # downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
-            #     tasks=downstream_eval_tasks,
-            #     tokenizer=tokenizer_config,
-            #     eval_interval=config["steps"]/config["evaluation_times"],
-            #     eval_on_startup=False,  # Disable eval_on_startup to avoid blocking
-            #     log_interval=5,
-            #     enabled=True
-            # )
-        else:
-            downstream_eval_cb_config = None
-            lm_eval_callback_config = None
 
         # Configure trainer
         trainer_config = TrainerConfig(
@@ -214,10 +221,10 @@ def main():
             trainer_config = trainer_config.with_callback("wandb", wandb_cb)
         if inference_cb:
             trainer_config = trainer_config.with_callback("inference", inference_cb)
-        # if downstream_eval_cb_config:
-        #     trainer_config = trainer_config.with_callback("downstream_eval", downstream_eval_cb_config)
-        # if lm_eval_callback_config:
-        #     trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
+        if downstream_eval_cb_config:
+            trainer_config = trainer_config.with_callback("downstream_eval", downstream_eval_cb_config)
+        if lm_eval_callback_config:
+            trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
         
         # Enhanced logging before trainer build
         if is_distributed():
