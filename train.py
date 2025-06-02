@@ -141,16 +141,16 @@ def main():
         inference_mode = config.get("inference_mode", "all")
 
         # Create inference callback (only on rank 0)
-        if not is_distributed() or get_rank() == 0:
-            inference_cb = InferenceCallback(
-                model=model,
-                tokenizer_config=tokenizer_config,
-                prompts=inference_prompts,
-                interval=config["steps"]/config["inference_times"],
-                inference_mode=inference_mode
-            )
-        else:
-            inference_cb = None
+        # if not is_distributed() or get_rank() == 0:
+        #     inference_cb = InferenceCallback(
+        #         model=model,
+        #         tokenizer_config=tokenizer_config,
+        #         prompts=inference_prompts,
+        #         interval=config["steps"]/config["inference_times"],
+        #         inference_mode=inference_mode
+        #     )
+        # else:
+        #     inference_cb = None
 
         # Evaluation tasks (only on rank 0)
         downstream_eval_tasks = [
@@ -171,6 +171,12 @@ def main():
             )
         else:
             inference_cb = None
+        
+                # Add barrier AFTER callback creation to synchronize all ranks
+        if is_distributed():
+            print(f"Rank {get_rank()}: About to synchronize after callback creation")
+            dist.barrier()
+            print(f"Rank {get_rank()}: All ranks synchronized after callback creation")
 
         # Temporarily disable downstream evaluation to isolate the issue
         if not is_distributed() or get_rank() == 0:
