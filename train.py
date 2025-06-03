@@ -153,7 +153,7 @@ def main():
                 prompts=inference_prompts,
                 interval=config["steps"]/config["inference_times"],
                 inference_mode=inference_mode,
-                # skip_pre_train=is_distributed()
+                skip_pre_train=is_distributed()
             )
             print(f"Rank {get_rank()}: Succesfully created Inference Callback")
 

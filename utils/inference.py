@@ -4,20 +4,24 @@ from olmo_core.train.callbacks import Callback
 import wandb
 
 class InferenceCallback(Callback):
-    def __init__(self, model, tokenizer_config, prompts, interval, inference_mode="cycle"):
+    def __init__(self, model, tokenizer_config, prompts, interval, inference_mode="cycle", skip_pre_train=False):
         self.model = model
         self.tokenizer_config = tokenizer_config
         self.prompts = prompts if isinstance(prompts, list) else [prompts]  # Support both single prompt and list
         self.interval = interval
         self.inference_mode = inference_mode  # "cycle", "all", or "random"
+        self.skip_pre_train = skip_pre_train
         self.current_prompt_idx = 0  # For cycling through prompts
         self.tokenizer = AutoTokenizer.from_pretrained("allenai/gpt-neox-olmo-dolma-v1_5")
 
     def pre_train(self):
-        self.run_inference(0)
+        if not self.skip_pre_train:
+            self.run_inference(0)
+        else:
+            print("Skipping pre_train inference in distributed mode")
 
     def post_step(self):
-        if self.trainer.global_step % self.interval == 0:
+        if self.trainer.global_step % self.interval == 0 and self.trainer.global_step > 0:
             self.run_inference(self.trainer.global_step)
 
     def run_inference(self, step):
