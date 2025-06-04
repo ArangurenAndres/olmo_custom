@@ -46,9 +46,9 @@ class InferenceCallback(Callback):
             input_tensor = torch.tensor([tokens], device=self.model.device)
             generated = tokens.copy()
 
-            print(f"[Step {step}] Starting inference with prompt: {prompt[:50]}...")
 
             with torch.no_grad():
+                print(f"[Step {step}] Starting inference with prompt: {prompt[:50]}...")
                 # Initial forward pass
                 logits = self.model(input_tensor)
                 
