@@ -56,9 +56,9 @@ class InferenceCallback(Callback):
             print(f"[Step {step}] ========== STARTING FSDP-SAFE INFERENCE ==========")
             print(f"[Step {step}] Time: {time.time() - start_time:.3f}s")
             
-            # Get the actual model from the trainer (this will be FSDP-wrapped)
-            actual_model = self.trainer.model
-            print(f"[Step {step}] Using model from trainer: {type(actual_model)}")
+            # Get the actual model from the train_module (this will be FSDP-wrapped)
+            actual_model = self.trainer.train_module.model
+            print(f"[Step {step}] Using model from train_module: {type(actual_model)}")
             
             # Check if model is FSDP wrapped - use the actual FSDP class
             from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -194,7 +194,11 @@ class InferenceCallback(Callback):
         finally:
             # Always return model to train mode
             print(f"[Step {step}] Setting model back to train mode...")
-            actual_model.train()
+            try:
+                actual_model = self.trainer.train_module.model
+                actual_model.train()
+            except:
+                print(f"[Step {step}] Could not access model to set train mode")
             total_time = time.time() - start_time
             print(f"[Step {step}] ========== INFERENCE COMPLETE in {total_time:.3f}s ==========")
 
