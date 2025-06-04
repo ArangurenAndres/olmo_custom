@@ -4,6 +4,7 @@ from olmo_core.train.callbacks import Callback
 import wandb
 from olmo_core.distributed.utils import is_distributed, get_rank
 import time
+from olmo_core.distributed.parallel import DataParallelType
 
 class InferenceCallback(Callback):
     def __init__(self, model, tokenizer_config, prompts, interval, inference_mode="all", skip_pre_train=False):
@@ -57,8 +58,8 @@ class InferenceCallback(Callback):
             print(f"[Step {step}] Time: {time.time() - start_time:.3f}s")
             
             # Check if model is FSDP wrapped
-            from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-            is_fsdp = isinstance(self.model, FSDP)
+            
+            is_fsdp = isinstance(self.model, DataParallelType.fsdp)
             print(f"[Step {step}] Model is FSDP wrapped: {is_fsdp}")
             
             # Check model state
