@@ -27,10 +27,10 @@ class InferenceCallback(Callback):
 
     def post_step(self):
         # Only run inference on rank 0 and at the correct interval
-        should_run = (not is_distributed() or get_rank() == 0) and \
+        should_run = (not is_distributed()) and \
                     self.trainer.global_step % self.interval == 0 and \
                     self.trainer.global_step > 0
-        
+        # or get_rank() == 0
         if should_run:
             print(f"post_step: Running inference at step {self.trainer.global_step}")
             self.run_inference(self.trainer.global_step)
