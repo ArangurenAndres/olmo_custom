@@ -24,7 +24,7 @@ n_kv_heads: 4                             # Number of key/value heads for GQA. M
                                           # Make sure build_model passes this to TransformerConfig.
 # Layer-Wise Scaling parameters
 
-learning_rate: 0.001
+learning_rate: 0.0001
 # INCREASE LEARNING RATE for small runs <5B tokens
 
 fnn_scalars: [2.0, 5.3]
@@ -168,8 +168,8 @@ WANDB_API_KEY: "8e07447fa3d6269331f7ecd0b27f8518c2a65855"
 
 #learning_rate: 0.001
 # INCREASE LEARNING RATE for small runs <5B tokens
-weight_decay: 0.1
-betas: [0.9, 0.95]                        # AdamW betas
+weight_decay: 0.01
+betas: [0.9, 0.98]                        # AdamW betas
 seed: 42                                  # Base seed for reproducibility (will be adjusted per rank in train.py)
 
 
@@ -190,6 +190,7 @@ seed: 42                                  # Base seed for reproducibility (will 
 # and custom LWS scalars if they modify the TransformerConfig or model layers.
 model_dtype: "bf16"                       # Precision for model parameters and computation (e.g., "bf16", "fp32").
                                           # This will guide dtype in build_model and FSDP settings.
+max_grad_norm: 1.0                        # Maximum gradient norm for clipping (if applicable)
 
 # OLMo-190M defaults (can be overridden if build_model passes them to TransformerConfig)
 global_dim: 768                           # d_model: Dimensionality of the model

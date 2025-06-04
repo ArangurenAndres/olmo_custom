@@ -90,6 +90,9 @@ def build_train_module_with_fsdp(model, config):
         dp_config=dp_config,
         max_sequence_length=config["sequence_length"],
         rank_microbatch_size=config.get("rank_microbatch_size", 2048),
+        compile_model=False,
+        max_grad_norm=1.0,  # Add gradient clipping
+        precision=DType.bfloat16 #if device.type == "cuda" else DType.float32
     )
     
     # Pass model to build() method, not to constructor
