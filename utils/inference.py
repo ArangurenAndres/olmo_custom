@@ -97,19 +97,13 @@ class InferenceCallback(Callback):
             with torch.no_grad():
                 if is_fsdp:
                     print(f"[Step {step}] Using FSDP context for OLMo Core FSDP...")
-                    # For OLMo Core's FSDP, we need to use their specific context
+                    # For OLMo Core's FSDP, use summon_full_params on the top-level model
                     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
                     
-                    # Try to find the underlying FSDP modules
-                    fsdp_modules = []
-                    for module in actual_model.modules():
-                        if isinstance(module, FSDP):
-                            fsdp_modules.append(module)
-                    
-                    if fsdp_modules:
-                        print(f"[Step {step}] Found {len(fsdp_modules)} FSDP modules, using summon_full_params...")
-                        # Use summon_full_params on the first FSDP module found
-                        with FSDP.summon_full_params(fsdp_modules[0], recurse=True):
+                    # Check if the model itself is an FSDP instance
+                    if isinstance(actual_model, FSDP):
+                        print(f"[Step {step}] Top-level model is FSDP, using summon_full_params...")
+                        with FSDP.summon_full_params(actual_model, recurse=True):
                             print(f"[Step {step}] FSDP parameters summoned. Time: {time.time() - start_time:.3f}s")
                             
                             # Move tensor to device after summon_full_params
@@ -129,22 +123,52 @@ class InferenceCallback(Callback):
                             next_token = torch.multinomial(probs, 1).item()
                             generated = tokens + [next_token]
                     else:
-                        print(f"[Step {step}] No standard FSDP modules found, trying direct inference...")
-                        # Fallback to direct inference
-                        device = next(actual_model.parameters()).device
-                        print(f"[Step {step}] Model device: {device}")
-                        input_tensor = input_tensor.to(device, non_blocking=True)
+                        # Try to find FSDP modules within the model
+                        fsdp_modules = []
+                        for module in actual_model.modules():
+                            if isinstance(module, FSDP):
+                                fsdp_modules.append(module)
                         
-                        print(f"[Step {step}] Starting direct forward pass...")
-                        logits = actual_model(input_tensor)
-                        print(f"[Step {step}] Direct forward pass completed")
-                        
-                        next_token_logits = logits[0, -1, :] / 0.8
-                        next_token_logits[0] = -float("inf")
-                        probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                        next_token = torch.multinomial(probs, 1).item()
-                        generated = tokens + [next_token]
-                        
+                        if fsdp_modules:
+                            print(f"[Step {step}] Found {len(fsdp_modules)} FSDP modules, using summon_full_params...")
+                            # Use summon_full_params on the first FSDP module found
+                            with FSDP.summon_full_params(fsdp_modules[0], recurse=True):
+                                print(f"[Step {step}] FSDP parameters summoned. Time: {time.time() - start_time:.3f}s")
+                                
+                                # Move tensor to device after summon_full_params
+                                device = next(actual_model.parameters()).device
+                                print(f"[Step {step}] Model device: {device}")
+                                input_tensor = input_tensor.to(device, non_blocking=True)
+                                print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
+                                
+                                # Single forward pass for FSDP
+                                print(f"[Step {step}] Starting FSDP forward pass...")
+                                logits = actual_model(input_tensor)
+                                print(f"[Step {step}] FSDP forward pass completed")
+                                
+                                next_token_logits = logits[0, -1, :] / 0.8
+                                next_token_logits[0] = -float("inf")
+                                probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                                next_token = torch.multinomial(probs, 1).item()
+                                generated = tokens + [next_token]
+                        else:
+                            print(f"[Step {step}] No FSDP modules found, trying OLMo Core specific approach...")
+                            # For OLMo Core's custom FSDP implementation, try using eval context
+                            device = next(actual_model.parameters()).device
+                            print(f"[Step {step}] Model device: {device}")
+                            input_tensor = input_tensor.to(device, non_blocking=True)
+                            
+                            # Use a context manager for safe FSDP evaluation
+                            print(f"[Step {step}] Starting OLMo Core FSDP forward pass...")
+                            logits = actual_model(input_tensor)
+                            print(f"[Step {step}] OLMo Core FSDP forward pass completed")
+                            
+                            next_token_logits = logits[0, -1, :] / 0.8
+                            next_token_logits[0] = -float("inf")
+                            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                            next_token = torch.multinomial(probs, 1).item()
+                            generated = tokens + [next_token]
+                            
                 else:
                     print(f"[Step {step}] Using regular inference for non-FSDP model...")
                     # Get device but handle potential distributed issues
