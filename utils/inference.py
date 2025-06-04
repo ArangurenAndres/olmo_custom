@@ -56,17 +56,21 @@ class InferenceCallback(Callback):
             print(f"[Step {step}] ========== STARTING FSDP-SAFE INFERENCE ==========")
             print(f"[Step {step}] Time: {time.time() - start_time:.3f}s")
             
+            # Get the actual model from the trainer (this will be FSDP-wrapped)
+            actual_model = self.trainer.model
+            print(f"[Step {step}] Using model from trainer: {type(actual_model)}")
+            
             # Check if model is FSDP wrapped - use the actual FSDP class
             from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-            is_fsdp = isinstance(self.model, FSDP)
+            is_fsdp = isinstance(actual_model, FSDP)
             print(f"[Step {step}] Model is FSDP wrapped: {is_fsdp}")
             
             # Check model state
-            print(f"[Step {step}] Model training mode: {self.model.training}")
+            print(f"[Step {step}] Model training mode: {actual_model.training}")
             
             # Set model to eval mode
             print(f"[Step {step}] Setting model to eval mode...")
-            self.model.eval()
+            actual_model.eval()
             print(f"[Step {step}] Model eval mode set. Time: {time.time() - start_time:.3f}s")
             
             # Select prompt based on inference mode
@@ -95,18 +99,18 @@ class InferenceCallback(Callback):
                 if is_fsdp:
                     print(f"[Step {step}] Using FSDP summon_full_params context...")
                     # Use FSDP's summon_full_params context for inference
-                    with FSDP.summon_full_params(self.model, recurse=True):
+                    with FSDP.summon_full_params(actual_model, recurse=True):
                         print(f"[Step {step}] FSDP parameters summoned. Time: {time.time() - start_time:.3f}s")
                         
                         # Move tensor to device after summon_full_params
-                        device = next(self.model.parameters()).device
+                        device = next(actual_model.parameters()).device
                         print(f"[Step {step}] Model device: {device}")
                         input_tensor = input_tensor.to(device, non_blocking=True)
                         print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
                         
                         # Single forward pass for FSDP
                         print(f"[Step {step}] Starting FSDP forward pass...")
-                        logits = self.model(input_tensor)
+                        logits = actual_model(input_tensor)
                         print(f"[Step {step}] FSDP forward pass completed")
                         
                         next_token_logits = logits[0, -1, :] / 0.8
@@ -119,7 +123,7 @@ class InferenceCallback(Callback):
                     print(f"[Step {step}] Using regular inference for non-FSDP model...")
                     # Get device but handle potential distributed issues
                     try:
-                        device = next(self.model.parameters()).device
+                        device = next(actual_model.parameters()).device
                         print(f"[Step {step}] Model device: {device}")
                     except Exception as e:
                         print(f"[Step {step}] Error getting device: {e}")
@@ -140,7 +144,7 @@ class InferenceCallback(Callback):
                     forward_start = time.time()
                     
                     try:
-                        logits = self.model(input_tensor)
+                        logits = actual_model(input_tensor)
                         forward_time = time.time() - forward_start
                         print(f"[Step {step}] Forward pass completed in {forward_time:.3f}s")
                         
@@ -190,7 +194,7 @@ class InferenceCallback(Callback):
         finally:
             # Always return model to train mode
             print(f"[Step {step}] Setting model back to train mode...")
-            self.model.train()
+            actual_model.train()
             total_time = time.time() - start_time
             print(f"[Step {step}] ========== INFERENCE COMPLETE in {total_time:.3f}s ==========")
 
