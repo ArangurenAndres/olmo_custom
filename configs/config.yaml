@@ -17,7 +17,7 @@ evaluation_times: 1 # run evaluation 2 times (eval_interval = steps/evaluation_i
 inference_times: 1   # Run inference 2 times (inference_interval = steps/inference_times)
 
 # Group Query Attention (GQA)
-n_kv_heads: 4                             # Number of key/value heads for GQA. Must be <= n_heads.
+n_kv_heads: 6                             # Number of key/value heads for GQA. Must be <= n_heads.
                                           # Make sure build_model passes this to TransformerConfig.
 # Layer-Wise Scaling parameters
 
