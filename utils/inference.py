@@ -58,8 +58,8 @@ class InferenceCallback(Callback):
             print(f"[Step {step}] Time: {time.time() - start_time:.3f}s")
             
             # Check if model is FSDP wrapped
-            
-            is_fsdp = isinstance(self.model, DataParallelType.fsdp)
+            FSDP = DataParallelType.fsdp
+            is_fsdp = isinstance(self.model, FSDP)
             print(f"[Step {step}] Model is FSDP wrapped: {is_fsdp}")
             
             # Check model state
