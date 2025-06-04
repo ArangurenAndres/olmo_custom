@@ -148,6 +148,15 @@ def main():
             )
             print(f"Rank {get_rank()}: Succesfully created WandB Callback")
 
+            inference_cb = InferenceCallback(
+                model=model,
+                tokenizer_config=tokenizer_config,
+                prompts=inference_prompts,
+                interval=config["steps"]/config["inference_times"],
+                inference_mode=inference_mode,
+                skip_pre_train=is_distributed()
+            )
+            print(f"Rank {get_rank()}: Succesfully created Inference Callback")
             # downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
             #     tasks=downstream_eval_tasks,
             #     tokenizer=tokenizer_config,
@@ -159,24 +168,13 @@ def main():
             # print(f"Rank {get_rank()}: Succesfully created Eval Callback")
             # lm_eval_callback_config = None  # Temporarily disabled
             
-            
+            print(f"Rank {get_rank()}: Callbacks created successfully")
         else:
             print(f"Rank {get_rank()}: Skipping callback creation (non-zero rank)")
             wandb_cb = None
-
-        inference_cb = InferenceCallback(
-                model=model,
-                tokenizer_config=tokenizer_config,
-                prompts=inference_prompts,
-                interval=config["steps"]/config["inference_times"],
-                inference_mode=inference_mode,
-                skip_pre_train=is_distributed()
-            )
-        print(f"Rank {get_rank()}: Succesfully created Inference Callback")
-
-        downstream_eval_cb_config = None
-        lm_eval_callback_config = None
-        print(f"Rank {get_rank()}: Callbacks created successfully")
+            inference_cb = None
+            downstream_eval_cb_config = None
+            lm_eval_callback_config = None
 
         # Evaluation tasks (only on rank 0)
 
