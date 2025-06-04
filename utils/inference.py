@@ -42,20 +42,41 @@ class InferenceCallback(Callback):
     def run_inference(self, step):
         """FSDP-safe inference implementation - disables inference in distributed mode"""
         try:
-            # Skip inference entirely in distributed training to avoid FSDP deadlock
-            if is_distributed():
-                print(f"[Step {step}] Skipping inference in distributed mode to avoid FSDP deadlock")
+            # Only execute on rank 0, but method exists on all ranks
+            if is_distributed() and get_rank() != 0:
                 return
                 
-            # Only run in single-GPU mode
             if self.tokenizer is None:
-                print(f"[Step {step}] No tokenizer available")
                 return
                 
-            print(f"[Step {step}] Starting single-GPU inference...")
+            print(f"[Step {step}] Starting FSDP-safe inference...")
             
-            # Set model to eval mode
-            self.model.eval()
+            # Check if model is FSDP wrapped
+            from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+            
+            if isinstance(self.model, FSDP):
+                # Use FSDP's summon_full_params context for inference
+                with FSDP.summon_full_params(self.model, recurse=True):
+                    self.model.eval()
+                    
+                    prompt = self.prompts[0]
+                    tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
+                    device = next(self.model.parameters()).device
+                    input_tensor = torch.tensor([tokens], dtype=torch.long, device=device)
+
+                    with torch.no_grad():
+                        logits = self.model(input_tensor)
+                        next_token_logits = logits[0, -1, :] / 0.8
+                        next_token_logits[0] = -float("inf")
+                        probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                        next_token = torch.multinomial(probs, 1).item()
+                        generated = tokens + [next_token]
+                        
+                        decoded = self.tokenizer.decode(generated)
+                        print(f"[Step {step}] Generated: {decoded}")
+            else:
+                # Regular inference for non-FSDP models
+                self.model.eval()
             
             # Select prompt
             prompt = self.prompts[0]  # Use first prompt only
