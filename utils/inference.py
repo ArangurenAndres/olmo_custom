@@ -60,9 +60,8 @@ class InferenceCallback(Callback):
             actual_model = self.trainer.train_module.model
             print(f"[Step {step}] Using model from train_module: {type(actual_model)}")
             
-            # Check if model is FSDP wrapped - use the actual FSDP class
-            from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-            is_fsdp = isinstance(actual_model, FSDP)
+            # Check if model is FSDP wrapped - check for OLMo Core's FSDP wrapper
+            is_fsdp = hasattr(actual_model, '_fsdp_enabled') or 'FSDP' in str(type(actual_model))
             print(f"[Step {step}] Model is FSDP wrapped: {is_fsdp}")
             
             # Check model state
@@ -97,21 +96,48 @@ class InferenceCallback(Callback):
             
             with torch.no_grad():
                 if is_fsdp:
-                    print(f"[Step {step}] Using FSDP summon_full_params context...")
-                    # Use FSDP's summon_full_params context for inference
-                    with FSDP.summon_full_params(actual_model, recurse=True):
-                        print(f"[Step {step}] FSDP parameters summoned. Time: {time.time() - start_time:.3f}s")
-                        
-                        # Move tensor to device after summon_full_params
+                    print(f"[Step {step}] Using FSDP context for OLMo Core FSDP...")
+                    # For OLMo Core's FSDP, we need to use their specific context
+                    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+                    
+                    # Try to find the underlying FSDP modules
+                    fsdp_modules = []
+                    for module in actual_model.modules():
+                        if isinstance(module, FSDP):
+                            fsdp_modules.append(module)
+                    
+                    if fsdp_modules:
+                        print(f"[Step {step}] Found {len(fsdp_modules)} FSDP modules, using summon_full_params...")
+                        # Use summon_full_params on the first FSDP module found
+                        with FSDP.summon_full_params(fsdp_modules[0], recurse=True):
+                            print(f"[Step {step}] FSDP parameters summoned. Time: {time.time() - start_time:.3f}s")
+                            
+                            # Move tensor to device after summon_full_params
+                            device = next(actual_model.parameters()).device
+                            print(f"[Step {step}] Model device: {device}")
+                            input_tensor = input_tensor.to(device, non_blocking=True)
+                            print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
+                            
+                            # Single forward pass for FSDP
+                            print(f"[Step {step}] Starting FSDP forward pass...")
+                            logits = actual_model(input_tensor)
+                            print(f"[Step {step}] FSDP forward pass completed")
+                            
+                            next_token_logits = logits[0, -1, :] / 0.8
+                            next_token_logits[0] = -float("inf")
+                            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                            next_token = torch.multinomial(probs, 1).item()
+                            generated = tokens + [next_token]
+                    else:
+                        print(f"[Step {step}] No standard FSDP modules found, trying direct inference...")
+                        # Fallback to direct inference
                         device = next(actual_model.parameters()).device
                         print(f"[Step {step}] Model device: {device}")
                         input_tensor = input_tensor.to(device, non_blocking=True)
-                        print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
                         
-                        # Single forward pass for FSDP
-                        print(f"[Step {step}] Starting FSDP forward pass...")
+                        print(f"[Step {step}] Starting direct forward pass...")
                         logits = actual_model(input_tensor)
-                        print(f"[Step {step}] FSDP forward pass completed")
+                        print(f"[Step {step}] Direct forward pass completed")
                         
                         next_token_logits = logits[0, -1, :] / 0.8
                         next_token_logits[0] = -float("inf")
