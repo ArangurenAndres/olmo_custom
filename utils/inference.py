@@ -104,71 +104,57 @@ class InferenceCallback(Callback):
                         input_tensor = input_tensor.to(device, non_blocking=True)
                         print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
                         
-                        generated = tokens.copy()
-                        print(f"[Step {step}] Starting generation loop...")
+                        # Single forward pass for FSDP
+                        print(f"[Step {step}] Starting FSDP forward pass...")
+                        logits = self.model(input_tensor)
+                        print(f"[Step {step}] FSDP forward pass completed")
                         
-                        # Generate multiple tokens for better testing
-                        for i in range(5):  # Generate 5 tokens
-                            loop_start = time.time()
-                            print(f"[Step {step}] Generation token {i}/5...")
-                            
-                            try:
-                                # Forward pass
-                                print(f"[Step {step}] Token {i}: Starting forward pass...")
-                                forward_start = time.time()
-                                
-                                # Use current input tensor for forward pass
-                                current_input = torch.tensor([generated], dtype=torch.long).to(device, non_blocking=True)
-                                logits = self.model(current_input)
-                                
-                                forward_time = time.time() - forward_start
-                                print(f"[Step {step}] Token {i}: Forward pass completed in {forward_time:.3f}s")
-                                
-                                # Get logits for next token
-                                next_token_logits = logits[0, -1, :] / 0.8
-                                next_token_logits[0] = -float("inf")  # Avoid token 0
-                                
-                                # Sample next token
-                                probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                                next_token = torch.multinomial(probs, 1).item()
-                                print(f"[Step {step}] Token {i}: Sampled token {next_token}")
-                                
-                                # Check for EOS or problematic tokens
-                                if hasattr(self.tokenizer_config, 'eos_token_id') and next_token == self.tokenizer_config.eos_token_id:
-                                    print(f"[Step {step}] Token {i}: EOS token encountered, stopping")
-                                    break
-                                if next_token == 0:
-                                    print(f"[Step {step}] Token {i}: Token 0 encountered, skipping")
-                                    continue
-                                    
-                                # Add token
-                                generated.append(next_token)
-                                print(f"[Step {step}] Token {i}: Added token, total length now {len(generated)}")
-                                
-                                loop_time = time.time() - loop_start
-                                total_time = time.time() - start_time
-                                print(f"[Step {step}] Token {i}: Loop completed in {loop_time:.3f}s, total: {total_time:.3f}s")
-                                
-                            except Exception as gen_error:
-                                print(f"[Step {step}] Generation error at token {i}: {gen_error}")
-                                import traceback
-                                traceback.print_exc()
-                                break
-                                
+                        next_token_logits = logits[0, -1, :] / 0.8
+                        next_token_logits[0] = -float("inf")
+                        probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                        next_token = torch.multinomial(probs, 1).item()
+                        generated = tokens + [next_token]
+                        
                 else:
                     print(f"[Step {step}] Using regular inference for non-FSDP model...")
-                    # Regular inference for non-FSDP models
-                    device = next(self.model.parameters()).device
-                    print(f"[Step {step}] Model device: {device}")
-                    input_tensor = input_tensor.to(device, non_blocking=True)
+                    # Get device but handle potential distributed issues
+                    try:
+                        device = next(self.model.parameters()).device
+                        print(f"[Step {step}] Model device: {device}")
+                    except Exception as e:
+                        print(f"[Step {step}] Error getting device: {e}")
+                        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                        print(f"[Step {step}] Using fallback device: {device}")
                     
-                    # Single forward pass for simplicity in non-FSDP case
-                    logits = self.model(input_tensor)
-                    next_token_logits = logits[0, -1, :] / 0.8
-                    next_token_logits[0] = -float("inf")
-                    probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                    next_token = torch.multinomial(probs, 1).item()
-                    generated = tokens + [next_token]
+                    print(f"[Step {step}] Moving input tensor to device...")
+                    input_tensor = input_tensor.to(device, non_blocking=True)
+                    print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
+                    
+                    # Add a synchronization point to ensure tensor is on device
+                    if device.type == "cuda":
+                        torch.cuda.synchronize()
+                        print(f"[Step {step}] CUDA synchronized. Time: {time.time() - start_time:.3f}s")
+                    
+                    # Single forward pass for non-FSDP case
+                    print(f"[Step {step}] Starting forward pass...")
+                    forward_start = time.time()
+                    
+                    try:
+                        logits = self.model(input_tensor)
+                        forward_time = time.time() - forward_start
+                        print(f"[Step {step}] Forward pass completed in {forward_time:.3f}s")
+                        
+                        next_token_logits = logits[0, -1, :] / 0.8
+                        next_token_logits[0] = -float("inf")
+                        probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                        next_token = torch.multinomial(probs, 1).item()
+                        generated = tokens + [next_token]
+                        
+                    except Exception as forward_error:
+                        print(f"[Step {step}] Forward pass error: {forward_error}")
+                        import traceback
+                        traceback.print_exc()
+                        return
                 
                 print(f"[Step {step}] Generation completed. Time: {time.time() - start_time:.3f}s")
                 
