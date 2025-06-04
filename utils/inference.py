@@ -95,120 +95,42 @@ class InferenceCallback(Callback):
             print(f"[Step {step}] Input tensor created on CPU. Time: {time.time() - start_time:.3f}s")
             
             with torch.no_grad():
-                if is_fsdp:
-                    print(f"[Step {step}] Using FSDP context for OLMo Core FSDP...")
-                    # For OLMo Core's FSDP, use summon_full_params on the top-level model
-                    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+                # For OLMo Core's FSDP, we can directly use the model without special context management
+                print(f"[Step {step}] Using OLMo Core FSDP direct inference...")
+                
+                # Get device and move tensor
+                device = next(actual_model.parameters()).device
+                print(f"[Step {step}] Model device: {device}")
+                input_tensor = input_tensor.to(device, non_blocking=True)
+                print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
+                
+                # Add CUDA synchronization for safety
+                if device.type == "cuda":
+                    torch.cuda.synchronize()
+                    print(f"[Step {step}] CUDA synchronized. Time: {time.time() - start_time:.3f}s")
+                
+                # Direct forward pass - OLMo Core FSDP handles parameter management internally
+                print(f"[Step {step}] Starting direct forward pass...")
+                forward_start = time.time()
+                
+                try:
+                    # The key insight: OLMo Core's FSDP works without summon_full_params
+                    logits = actual_model(input_tensor)
+                    forward_time = time.time() - forward_start
+                    print(f"[Step {step}] Forward pass completed in {forward_time:.3f}s")
                     
-                    # Check if the model itself is an FSDP instance
-                    if isinstance(actual_model, FSDP):
-                        print(f"[Step {step}] Top-level model is FSDP, using summon_full_params...")
-                        with FSDP.summon_full_params(actual_model, recurse=True):
-                            print(f"[Step {step}] FSDP parameters summoned. Time: {time.time() - start_time:.3f}s")
-                            
-                            # Move tensor to device after summon_full_params
-                            device = next(actual_model.parameters()).device
-                            print(f"[Step {step}] Model device: {device}")
-                            input_tensor = input_tensor.to(device, non_blocking=True)
-                            print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
-                            
-                            # Single forward pass for FSDP
-                            print(f"[Step {step}] Starting FSDP forward pass...")
-                            logits = actual_model(input_tensor)
-                            print(f"[Step {step}] FSDP forward pass completed")
-                            
-                            next_token_logits = logits[0, -1, :] / 0.8
-                            next_token_logits[0] = -float("inf")
-                            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                            next_token = torch.multinomial(probs, 1).item()
-                            generated = tokens + [next_token]
-                    else:
-                        # Try to find FSDP modules within the model
-                        fsdp_modules = []
-                        for module in actual_model.modules():
-                            if isinstance(module, FSDP):
-                                fsdp_modules.append(module)
-                        
-                        if fsdp_modules:
-                            print(f"[Step {step}] Found {len(fsdp_modules)} FSDP modules, using summon_full_params...")
-                            # Use summon_full_params on the first FSDP module found
-                            with FSDP.summon_full_params(fsdp_modules[0], recurse=True):
-                                print(f"[Step {step}] FSDP parameters summoned. Time: {time.time() - start_time:.3f}s")
-                                
-                                # Move tensor to device after summon_full_params
-                                device = next(actual_model.parameters()).device
-                                print(f"[Step {step}] Model device: {device}")
-                                input_tensor = input_tensor.to(device, non_blocking=True)
-                                print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
-                                
-                                # Single forward pass for FSDP
-                                print(f"[Step {step}] Starting FSDP forward pass...")
-                                logits = actual_model(input_tensor)
-                                print(f"[Step {step}] FSDP forward pass completed")
-                                
-                                next_token_logits = logits[0, -1, :] / 0.8
-                                next_token_logits[0] = -float("inf")
-                                probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                                next_token = torch.multinomial(probs, 1).item()
-                                generated = tokens + [next_token]
-                        else:
-                            print(f"[Step {step}] No FSDP modules found, trying OLMo Core specific approach...")
-                            # For OLMo Core's custom FSDP implementation, try using eval context
-                            device = next(actual_model.parameters()).device
-                            print(f"[Step {step}] Model device: {device}")
-                            input_tensor = input_tensor.to(device, non_blocking=True)
-                            
-                            # Use a context manager for safe FSDP evaluation
-                            print(f"[Step {step}] Starting OLMo Core FSDP forward pass...")
-                            logits = actual_model(input_tensor)
-                            print(f"[Step {step}] OLMo Core FSDP forward pass completed")
-                            
-                            next_token_logits = logits[0, -1, :] / 0.8
-                            next_token_logits[0] = -float("inf")
-                            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                            next_token = torch.multinomial(probs, 1).item()
-                            generated = tokens + [next_token]
-                            
-                else:
-                    print(f"[Step {step}] Using regular inference for non-FSDP model...")
-                    # Get device but handle potential distributed issues
-                    try:
-                        device = next(actual_model.parameters()).device
-                        print(f"[Step {step}] Model device: {device}")
-                    except Exception as e:
-                        print(f"[Step {step}] Error getting device: {e}")
-                        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                        print(f"[Step {step}] Using fallback device: {device}")
+                    # Process output
+                    next_token_logits = logits[0, -1, :] / 0.8
+                    next_token_logits[0] = -float("inf")
+                    probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(probs, 1).item()
+                    generated = tokens + [next_token]
                     
-                    print(f"[Step {step}] Moving input tensor to device...")
-                    input_tensor = input_tensor.to(device, non_blocking=True)
-                    print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
-                    
-                    # Add a synchronization point to ensure tensor is on device
-                    if device.type == "cuda":
-                        torch.cuda.synchronize()
-                        print(f"[Step {step}] CUDA synchronized. Time: {time.time() - start_time:.3f}s")
-                    
-                    # Single forward pass for non-FSDP case
-                    print(f"[Step {step}] Starting forward pass...")
-                    forward_start = time.time()
-                    
-                    try:
-                        logits = actual_model(input_tensor)
-                        forward_time = time.time() - forward_start
-                        print(f"[Step {step}] Forward pass completed in {forward_time:.3f}s")
-                        
-                        next_token_logits = logits[0, -1, :] / 0.8
-                        next_token_logits[0] = -float("inf")
-                        probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                        next_token = torch.multinomial(probs, 1).item()
-                        generated = tokens + [next_token]
-                        
-                    except Exception as forward_error:
-                        print(f"[Step {step}] Forward pass error: {forward_error}")
-                        import traceback
-                        traceback.print_exc()
-                        return
+                except Exception as forward_error:
+                    print(f"[Step {step}] Forward pass error: {forward_error}")
+                    import traceback
+                    traceback.print_exc()
+                    return
                 
                 print(f"[Step {step}] Generation completed. Time: {time.time() - start_time:.3f}s")
                 
