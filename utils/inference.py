@@ -39,79 +39,77 @@ class InferenceCallback(Callback):
             print(f"post_step: Running inference at step {self.trainer.global_step}")
             self.run_inference(self.trainer.global_step)
 
-    def run_inference(self, step):
-        """FSDP-safe inference implementation - disables inference in distributed mode"""
-        try:
-            # Only execute on rank 0, but method exists on all ranks
-            if is_distributed() and get_rank() != 0:
-                return
-                
-            if self.tokenizer is None:
-                return
-                
-            print(f"[Step {step}] Starting FSDP-safe inference...")
+def run_inference(self, step):
+    """FSDP-safe inference implementation"""
+    try:
+        # Only execute on rank 0, but method exists on all ranks
+        if is_distributed() and get_rank() != 0:
+            return
             
-            # Check if model is FSDP wrapped
-            from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        if self.tokenizer is None:
+            return
             
+        print(f"[Step {step}] Starting FSDP-safe inference...")
+        
+        # Check if model is FSDP wrapped
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        
+        # Set model to eval mode first
+        self.model.eval()
+        
+        # Select prompt
+        prompt = self.prompts[0]
+        print(f"[Step {step}] Prompt: {prompt[:50]}...")
+        
+        # Tokenize input
+        tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
+        
+        # Create tensor on CPU first to avoid synchronization warning
+        input_tensor = torch.tensor([tokens], dtype=torch.long)
+        
+        with torch.no_grad():
             if isinstance(self.model, FSDP):
                 # Use FSDP's summon_full_params context for inference
                 with FSDP.summon_full_params(self.model, recurse=True):
-                    self.model.eval()
-                    
-                    prompt = self.prompts[0]
-                    tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
+                    # Move tensor to device after summon_full_params
                     device = next(self.model.parameters()).device
-                    input_tensor = torch.tensor([tokens], dtype=torch.long, device=device)
-
-                    with torch.no_grad():
-                        logits = self.model(input_tensor)
-                        next_token_logits = logits[0, -1, :] / 0.8
-                        next_token_logits[0] = -float("inf")
-                        probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                        next_token = torch.multinomial(probs, 1).item()
-                        generated = tokens + [next_token]
-                        
-                        decoded = self.tokenizer.decode(generated)
-                        print(f"[Step {step}] Generated: {decoded}")
+                    input_tensor = input_tensor.to(device, non_blocking=True)
+                    
+                    # Single forward pass
+                    logits = self.model(input_tensor)
+                    next_token_logits = logits[0, -1, :] / 0.8
+                    next_token_logits[0] = -float("inf")
+                    probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(probs, 1).item()
+                    generated = tokens + [next_token]
             else:
                 # Regular inference for non-FSDP models
-                self.model.eval()
-            
-            # Select prompt
-            prompt = self.prompts[0]  # Use first prompt only
-            print(f"[Step {step}] Prompt: {prompt[:50]}...")
-            
-            # Tokenize input
-            tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
-            device = next(self.model.parameters()).device
-            input_tensor = torch.tensor([tokens], dtype=torch.long, device=device)
-            generated = tokens.copy()
-
-            with torch.no_grad():
-                # Single forward pass only (safe for single GPU)
+                device = next(self.model.parameters()).device
+                input_tensor = input_tensor.to(device, non_blocking=True)
+                
+                # Single forward pass
                 logits = self.model(input_tensor)
                 next_token_logits = logits[0, -1, :] / 0.8
                 next_token_logits[0] = -float("inf")
                 probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
                 next_token = torch.multinomial(probs, 1).item()
-                generated.append(next_token)
-                
-                # Decode and print
-                decoded = self.tokenizer.decode(generated)
-                print(f"[Step {step}] Generated: {decoded}")
-                
-                # Log to wandb if available
-                if wandb.run is not None:
-                    wandb.log({
-                        f"inference/step_{step}/generated": decoded
-                    }, step=step)
+                generated = tokens + [next_token]
+            
+            # Decode and print
+            decoded = self.tokenizer.decode(generated)
+            print(f"[Step {step}] Generated: {decoded}")
+            
+            # Log to wandb if available
+            if wandb.run is not None:
+                wandb.log({
+                    f"inference/step_{step}/generated": decoded
+                }, step=step)
                     
-        except Exception as e:
-            print(f"[Step {step}] Inference error: {e}")
-        finally:
-            self.model.train()
-            print(f"[Step {step}] Inference complete")
+    except Exception as e:
+        print(f"[Step {step}] Inference error: {e}")
+    finally:
+        self.model.train()
+        print(f"[Step {step}] Inference complete")
 
     # def run_inference(self, step):
     #     """Run inference with proper FSDP handling and detailed logging"""
