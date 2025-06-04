@@ -27,7 +27,7 @@ class InferenceCallback(Callback):
 
     def post_step(self):
         # Only run inference on rank 0 and at the correct interval
-        should_run = (not is_distributed() or get_rank == 0) and \
+        should_run = (not is_distributed() or get_rank() == 0) and \
                     self.trainer.global_step % self.interval == 0 and \
                     self.trainer.global_step > 0
         if should_run:
