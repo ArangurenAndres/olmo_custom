@@ -4,8 +4,6 @@ from transformers import AutoTokenizer
 from olmo_core.train.callbacks import Callback
 import wandb
 from olmo_core.distributed.utils import is_distributed, get_rank
-# This is the correct FSDP class provided by the olmo_core library
-from olmo_core.distributed.fsdp import FullyShardedDataParallel as OlmoFSDP
 import time
 import random
 
@@ -25,31 +23,32 @@ class InferenceCallback(Callback):
             self.tokenizer = None
 
     def pre_train(self):
-        # Only run on rank 0
-        if not self.skip_pre_train and (not is_distributed() or get_rank() == 0):
-            print("Running pre_train inference...")
-            self.run_inference(0)
+        if not self.skip_pre_train:
+            if not is_distributed() or get_rank() == 0:
+                print("Running pre_train inference...")
+                self.run_inference(0)
+        else:
+            if not is_distributed() or get_rank() == 0:
+                print("Skipping pre_train inference.")
 
     def post_step(self):
-        # The generation logic will only run on rank 0 inside run_inference
         if self.trainer.global_step > 0 and self.trainer.global_step % self.interval == 0:
             self.run_inference(self.trainer.global_step)
 
     def run_inference(self, step):
         """
-        Final robust version: manual auto-regressive generation on rank 0.
+        Final robust FSDP-safe inference callback with a manual auto-regressive generation loop.
         """
         rank = get_rank() if is_distributed() else 0
         actual_model = self.trainer.train_module.model
-        is_fsdp = isinstance(actual_model, OlmoFSDP)
+        is_fsdp = hasattr(actual_model, '_fsdp_enabled') or 'FSDP' in str(type(actual_model))
 
-        # All ranks must set model to eval mode
         actual_model.eval()
 
         try:
-            # Generation logic is now confined to rank 0
+            # Generation logic is performed only on rank 0.
+            # Other ranks will wait at the final barrier.
             if rank == 0:
-                print(f"Starting inference on rank 0 for step {step}...")
                 if self.tokenizer is None:
                     print("Tokenizer not available on rank 0. Skipping inference.")
                     return
@@ -62,50 +61,60 @@ class InferenceCallback(Callback):
                 else:
                     prompt = self.prompts[0]
 
+                # Initial input for the generation loop
                 input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.trainer.device)
-                
+                generated_ids = input_ids.clone()
+
+                # --- Manual Auto-Regressive Generation Loop ---
                 with torch.no_grad():
-                    # The FSDP `summon_full_params` context is essential
-                    with OlmoFSDP.summon_full_params(actual_model, recurse=True) if is_fsdp else contextlib.nullcontext():
-                        generated_tokens = []
+                    # The FSDP context needs to wrap the model call inside the loop
+                    if is_fsdp:
+                        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+                        with FSDP.summon_full_params(actual_model, recurse=True, offload_to_cpu=False):
+                            # The olmo_core model uses a KV cache for efficient generation.
+                            # We pass `use_cache=True` to get the `past_key_values`.
+                            # On the first pass, `past_key_values` is None.
+                            past_key_values = None
+                            for _ in range(self.max_new_tokens):
+                                # The forward method of the olmo_core model returns (logits, past_key_values)
+                                # when use_cache is True.
+                                logits, past_key_values = actual_model(
+                                    input_ids=input_ids, past_key_values=past_key_values, use_cache=True
+                                )
+
+                                # Get the logits for the last token and sample the next one
+                                next_token_logits = logits[:, -1, :] / 0.8
+                                next_token_logits[:, self.tokenizer.pad_token_id] = -float("inf")
+                                probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                                next_token = torch.multinomial(probs, num_samples=1)
+
+                                # Append the new token to our generated sequence
+                                generated_ids = torch.cat([generated_ids, next_token], dim=1)
+
+                                # The next input to the model is just the newly generated token
+                                input_ids = next_token
+                    else: # Non-FSDP path
+                        # This logic would be the same but without the FSDP context manager
                         past_key_values = None
-                        
-                        # Generate the first set of logits and KV cache from the prompt
-                        # The OLMo model returns a tuple (logits, past_key_values) when use_cache is True
-                        outputs = actual_model(input_ids=input_ids, use_cache=True)
-                        logits, past_key_values = outputs[0], outputs[1]
-
-                        # Get the next token
-                        next_token_logits = logits[:, -1, :] / 0.8
-                        next_token_logits[:, self.tokenizer.eos_token_id] = -float("inf")
-                        next_token = torch.multinomial(torch.nn.functional.softmax(next_token_logits, dim=-1), num_samples=1)
-                        generated_tokens.append(next_token.item())
-                        
-                        # Auto-regressive generation loop for subsequent tokens
-                        for _ in range(self.max_new_tokens - 1):
-                            # For subsequent steps, the input is just the new token, and we pass the KV cache
-                            outputs = actual_model(input_ids=next_token, past_key_values=past_key_values, use_cache=True)
-                            logits, past_key_values = outputs[0], outputs[1]
-                            
+                        for _ in range(self.max_new_tokens):
+                            logits, past_key_values = actual_model(
+                                input_ids=input_ids, past_key_values=past_key_values, use_cache=True
+                            )
                             next_token_logits = logits[:, -1, :] / 0.8
-                            next_token_logits[:, self.tokenizer.eos_token_id] = -float("inf")
-                            next_token = torch.multinomial(torch.nn.functional.softmax(next_token_logits, dim=-1), num_samples=1)
+                            next_token_logits[:, self.tokenizer.pad_token_id] = -float("inf")
+                            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                            next_token = torch.multinomial(probs, num_samples=1)
+                            generated_ids = torch.cat([generated_ids, next_token], dim=1)
+                            input_ids = next_token
 
-                            if next_token.item() == self.tokenizer.eos_token_id:
-                                break
-                            
-                            generated_tokens.append(next_token.item())
 
-                        # Decode the final generated sequence
-                        full_sequence_ids = input_ids.tolist()[0] + generated_tokens
-                        decoded = self.tokenizer.decode(full_sequence_ids)
-                        
-                        print(f"[Step {step}] Generated: {decoded}")
-                        if wandb.run is not None:
-                            wandb.log({f"inference/step_{step}/full_text": decoded}, step=step)
+                decoded = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+                print(f"[Step {step}] Generated: {decoded}")
 
+                if wandb.run is not None:
+                    wandb.log({f"inference/step_{step}/full_text": decoded}, step=step)
         finally:
-            # All ranks must return the model to training mode and synchronize
+            # All ranks must set the model to train() and wait at a barrier
             actual_model.train()
             if is_distributed():
                 dist.barrier()
