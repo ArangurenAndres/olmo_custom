@@ -1,10 +1,11 @@
 import torch
+import torch.distributed as dist
 from transformers import AutoTokenizer
 from olmo_core.train.callbacks import Callback
 import wandb
 from olmo_core.distributed.utils import is_distributed, get_rank
 import time
-import torch.distributed as dist
+import random
 
 class InferenceCallback(Callback):
     def __init__(self, model, tokenizer_config, prompts, interval, inference_mode="all", skip_pre_train=False):
@@ -15,23 +16,19 @@ class InferenceCallback(Callback):
         self.inference_mode = inference_mode
         self.skip_pre_train = skip_pre_train
 
-        # Initialize tokenizer only on rank 0
         if not is_distributed() or get_rank() == 0:
             self.tokenizer = AutoTokenizer.from_pretrained("allenai/gpt-neox-olmo-dolma-v1_5")
         else:
             self.tokenizer = None
-
         print(f"InferenceCallback initialized with interval: {self.interval}, skip_pre_train: {self.skip_pre_train}")
 
     def pre_train(self):
         if not self.skip_pre_train:
-            print("Running pre_train inference...")
             self.run_inference(0)
         else:
             print("Skipping pre_train inference in distributed mode")
 
     def post_step(self):
-        # All ranks should call this method, and run_inference will handle rank-specific logic.
         if self.trainer.global_step > 0 and self.trainer.global_step % self.interval == 0:
             rank = get_rank() if is_distributed() else 0
             if rank == 0:
@@ -39,14 +36,13 @@ class InferenceCallback(Callback):
             self.run_inference(self.trainer.global_step)
 
     def run_inference(self, step):
-        """FSDP-safe inference implementation with correct synchronization and detailed logging."""
+        """FSDP-safe inference with robust synchronization."""
         rank = get_rank() if is_distributed() else 0
         print(f"[Rank {rank}, Step {step}] Entering run_inference.")
         start_time = time.time()
 
         actual_model = self.trainer.train_module.model
         is_fsdp = hasattr(actual_model, '_fsdp_enabled') or 'FSDP' in str(type(actual_model))
-
         actual_model.eval()
 
         if is_distributed():
@@ -60,7 +56,6 @@ class InferenceCallback(Callback):
             tokens_for_logging = []
 
             if rank == 0:
-                print(f"[Rank {rank}, Step {step}] ========== STARTING FSDP-SAFE INFERENCE ON RANK 0 ==========")
                 if self.tokenizer is None:
                     print(f"[Rank {rank}, Step {step}] Rank 0 has no tokenizer, aborting.")
                     if is_distributed():
@@ -68,9 +63,7 @@ class InferenceCallback(Callback):
                     return
 
                 if is_distributed():
-                    print(f"[Rank {rank}, Step {step}] Broadcasting success signal (0).")
                     dist.broadcast(torch.tensor([0], device=self.trainer.device), src=0)
-                    print(f"[Rank {rank}, Step {step}] Success signal broadcasted.")
 
                 if self.inference_mode == "cycle":
                     prompt = self.prompts[step % len(self.prompts)]
@@ -78,44 +71,41 @@ class InferenceCallback(Callback):
                     prompt = random.choice(self.prompts)
                 else:
                     prompt = self.prompts[0]
-
                 prompt_for_logging = prompt
-                print(f"[Rank {rank}, Step {step}] Selected prompt: {prompt[:50]}...")
                 tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
                 tokens_for_logging = tokens
-                
-                # Create tensor on CPU first
                 input_tensor = torch.tensor([tokens], dtype=torch.long, device="cpu")
 
             if is_distributed():
-                print(f"[Rank {rank}, Step {step}] Entering distributed data handling block.")
                 error_signal = torch.tensor([0], device=self.trainer.device)
-                print(f"[Rank {rank}, Step {step}] Pre-broadcast error_signal.")
                 dist.broadcast(error_signal, src=0)
-                print(f"[Rank {rank}, Step {step}] Post-broadcast error_signal. Value: {error_signal.item()}")
                 if error_signal.item() == 1:
                     print(f"[Rank {rank}, Step {step}] Received error signal. Aborting.")
                     return
 
-                tensor_size = torch.tensor([input_tensor.shape[1] if rank == 0 else 0], dtype=torch.long, device=self.trainer.device)
-                print(f"[Rank {rank}, Step {step}] Pre-broadcast tensor_size.")
-                dist.broadcast(tensor_size, src=0)
-                print(f"[Rank {rank}, Step {step}] Post-broadcast tensor_size. Value: {tensor_size.item()}")
+                # --- Robustly broadcast tensor size ---
+                if rank == 0:
+                    size_tensor = torch.tensor([input_tensor.shape[1]], dtype=torch.long, device=self.trainer.device)
+                else:
+                    size_tensor = torch.zeros(1, dtype=torch.long, device=self.trainer.device)
 
-                # *** THE FIX IS HERE ***
-                # Rank 0: move tensor to GPU. Other ranks: create tensor on GPU.
+                print(f"[Rank {rank}, Step {step}] Pre-broadcast size_tensor. Local value: {size_tensor.item()}")
+                dist.broadcast(size_tensor, src=0)
+                print(f"[Rank {rank}, Step {step}] Post-broadcast size_tensor. Synced value: {size_tensor.item()}")
+                
+                synced_size = size_tensor.item()
+
+                # --- Create tensors with synced size and broadcast ---
                 if rank == 0:
                     input_tensor = input_tensor.to(self.trainer.device)
                 else:
-                    input_tensor = torch.empty((1, tensor_size.item()), dtype=torch.long, device=self.trainer.device)
+                    input_tensor = torch.empty((1, synced_size), dtype=torch.long, device=self.trainer.device)
 
                 print(f"[Rank {rank}, Step {step}] Tensor created on device {input_tensor.device}. Shape: {input_tensor.shape}")
                 print(f"[Rank {rank}, Step {step}] Pre-broadcast input_tensor.")
                 dist.broadcast(input_tensor, src=0)
                 print(f"[Rank {rank}, Step {step}] Post-broadcast input_tensor.")
 
-            # All ranks now have the input_tensor on the correct device.
-            print(f"[Rank {rank}, Step {step}] Pre-forward pass. Device: {self.trainer.device}, Input tensor device: {input_tensor.device}")
             with torch.no_grad():
                 if is_fsdp:
                     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -126,8 +116,7 @@ class InferenceCallback(Callback):
                         print(f"[Rank {rank}, Step {step}] Forward pass complete.")
                 else:
                     logits = actual_model(input_tensor).logits
-                    print(f"[Rank {rank}, Step {step}] Forward pass complete (non-FSDP).")
-            
+
             if rank == 0:
                 print(f"[Rank {rank}, Step {step}] Processing output on rank 0.")
                 next_token_logits = logits[0, -1, :] / 0.8
@@ -139,14 +128,9 @@ class InferenceCallback(Callback):
                 print(f"[Step {step}] Generated: {decoded}")
 
                 if wandb.run is not None:
-                    original_prompt_token_count = len(tokens_for_logging)
-                    newly_generated_tokens = generated[original_prompt_token_count:]
-                    generated_text_only = self.tokenizer.decode(newly_generated_tokens)
                     wandb.log({
                         f"inference/step_{step}/prompt": prompt_for_logging,
-                        f"inference/step_{step}/generated": generated_text_only,
                         f"inference/step_{step}/full_text": decoded,
-                        f"inference/step_{step}/generation_time": time.time() - start_time
                     }, step=step)
                 print(f"[Rank {rank}, Step {step}] ========== INFERENCE COMPLETE ON RANK 0 ==========")
 
