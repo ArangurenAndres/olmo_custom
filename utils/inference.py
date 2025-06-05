@@ -38,9 +38,6 @@ class InferenceCallback(Callback):
     def run_inference(self, step):
         """Final, robust FSDP-safe inference for any environment."""
         rank = get_rank() if is_distributed() else 0
-        print(f"[Rank {rank}, Step {step}] Entering run_inference.")
-        start_time = time.time()
-
         actual_model = self.trainer.train_module.model
         is_fsdp = hasattr(actual_model, '_fsdp_enabled') or 'FSDP' in str(type(actual_model))
         actual_model.eval()
@@ -50,11 +47,13 @@ class InferenceCallback(Callback):
 
         try:
             input_tensor = None
+            tokens = []
+            prompt_for_logging = ""
+
+            # Step 1: Rank 0 prepares data and broadcasts size. All on GPU.
             if is_distributed():
-                # Step 1: Rank 0 prepares the data and determines the size.
                 if rank == 0:
                     if self.tokenizer is None:
-                        # Send -1 to signal an error
                         size_tensor = torch.tensor([-1], dtype=torch.long, device=self.trainer.device)
                     else:
                         if self.inference_mode == "cycle":
@@ -63,39 +62,50 @@ class InferenceCallback(Callback):
                             prompt = random.choice(self.prompts)
                         else:
                             prompt = self.prompts[0]
+                        prompt_for_logging = prompt
                         tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
                         size_tensor = torch.tensor([len(tokens)], dtype=torch.long, device=self.trainer.device)
                 else:
-                    # Ranks > 0 create a placeholder for the size.
                     size_tensor = torch.zeros(1, dtype=torch.long, device=self.trainer.device)
 
-                # Step 2: Broadcast the size of the tensor. This is a robust way to sync.
-                print(f"[Rank {rank}, Step {step}] Broadcasting tensor size.")
                 dist.broadcast(size_tensor, src=0)
-                print(f"[Rank {rank}, Step {step}] Size broadcast complete. Synced size: {size_tensor.item()}")
-                
                 synced_size = size_tensor.item()
-                if synced_size == -1:
-                    print(f"[Rank {rank}, Step {step}] Aborting due to error signal.")
-                    return
+                if synced_size == -1: return
 
-                # Step 3: Now that all ranks know the size, create the tensors and broadcast the data.
                 if rank == 0:
                     input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.trainer.device)
                 else:
                     input_tensor = torch.empty((1, synced_size), dtype=torch.long, device=self.trainer.device)
-                
-                print(f"[Rank {rank}, Step {step}] Broadcasting main tensor of shape {input_tensor.shape}.")
                 dist.broadcast(input_tensor, src=0)
-                print(f"[Rank {rank}, Step {step}] Main tensor broadcast complete.")
 
-            # --- At this point, all ranks have the identical `input_tensor` on their respective GPUs ---
+            # Non-distributed path
+            else:
+                 if self.tokenizer is not None:
+                    prompt = self.prompts[0]
+                    prompt_for_logging = prompt
+                    tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
+                    input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.trainer.device)
+
+
+            if input_tensor is None:
+                if rank == 0: print("Input tensor is None, skipping inference.")
+                return
+
+            # Step 2: FSDP-aware forward pass.
             with torch.no_grad():
-                # The forward pass is a collective operation. All ranks must participate.
-                logits = actual_model(input_tensor).logits
+                if is_fsdp:
+                    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+                    with FSDP.summon_full_params(actual_model, recurse=True):
+                        # --- THE FIX IS HERE ---
+                        # The model returns a raw tensor, not an object with a .logits attribute.
+                        logits = actual_model(input_tensor)
+                else:
+                    # Non-FSDP forward pass
+                    logits = actual_model(input_tensor)
 
+
+            # Step 3: Rank 0 processes and logs the output.
             if rank == 0:
-                # Only rank 0 processes and logs the output
                 print(f"[Rank {rank}, Step {step}] Processing output.")
                 next_token_logits = logits[0, -1, :] / 0.8
                 next_token_logits[0] = -float("inf")
@@ -115,11 +125,9 @@ class InferenceCallback(Callback):
                 traceback.print_exc()
         finally:
             # All ranks must switch back to train mode and synchronize.
-            print(f"[Rank {rank}, Step {step}] Setting model back to train mode.")
             actual_model.train()
             if is_distributed():
                 dist.barrier()
-                print(f"[Rank {rank}, Step {step}] Final barrier passed. Exiting run_inference.")
 
 # import torch
 # import torch.distributed as dist
