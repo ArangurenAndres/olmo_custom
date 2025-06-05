@@ -36,7 +36,7 @@ class InferenceCallback(Callback):
             self.run_inference(self.trainer.global_step)
 
     def run_inference(self, step):
-        """FSDP-safe inference with robust synchronization."""
+        """FSDP-safe inference with robust, all-GPU synchronization."""
         rank = get_rank() if is_distributed() else 0
         print(f"[Rank {rank}, Step {step}] Entering run_inference.")
         start_time = time.time()
@@ -46,76 +46,65 @@ class InferenceCallback(Callback):
         actual_model.eval()
 
         if is_distributed():
-            print(f"[Rank {rank}, Step {step}] Pre-barrier 1.")
             dist.barrier()
-            print(f"[Rank {rank}, Step {step}] Post-barrier 1.")
 
         try:
             input_tensor = None
             prompt_for_logging = ""
             tokens_for_logging = []
 
-            if rank == 0:
-                if self.tokenizer is None:
-                    print(f"[Rank {rank}, Step {step}] Rank 0 has no tokenizer, aborting.")
-                    if is_distributed():
-                        dist.broadcast(torch.tensor([1], device=self.trainer.device), src=0)
-                    return
-
-                if is_distributed():
-                    dist.broadcast(torch.tensor([0], device=self.trainer.device), src=0)
-
-                if self.inference_mode == "cycle":
-                    prompt = self.prompts[step % len(self.prompts)]
-                elif self.inference_mode == "random":
-                    prompt = random.choice(self.prompts)
-                else:
-                    prompt = self.prompts[0]
-                prompt_for_logging = prompt
-                tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
-                tokens_for_logging = tokens
-                input_tensor = torch.tensor([tokens], dtype=torch.long, device="cpu")
-
+            # --- Robustly broadcast tensor size using broadcast_object_list ---
             if is_distributed():
-                error_signal = torch.tensor([0], device=self.trainer.device)
-                dist.broadcast(error_signal, src=0)
-                if error_signal.item() == 1:
+                size_list = [0]
+                if rank == 0:
+                    # Tokenize on rank 0 only
+                    if self.tokenizer is None:
+                        # Error case
+                        size_list = [-1]
+                    else:
+                        if self.inference_mode == "cycle":
+                            prompt = self.prompts[step % len(self.prompts)]
+                        elif self.inference_mode == "random":
+                            prompt = random.choice(self.prompts)
+                        else:
+                            prompt = self.prompts[0]
+                        prompt_for_logging = prompt
+                        tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
+                        tokens_for_logging = tokens
+                        size_list = [len(tokens)]
+                
+                print(f"[Rank {rank}, Step {step}] Pre-broadcast size_list. Local value: {size_list}")
+                dist.broadcast_object_list([size_list], src=0)
+                print(f"[Rank {rank}, Step {step}] Post-broadcast size_list. Synced value: {size_list}")
+                
+                synced_size = size_list[0]
+                if synced_size == -1:
                     print(f"[Rank {rank}, Step {step}] Received error signal. Aborting.")
                     return
 
-                # --- Robustly broadcast tensor size ---
+                # --- Create and broadcast the main tensor, all on GPU ---
                 if rank == 0:
-                    size_tensor = torch.tensor([input_tensor.shape[1]], dtype=torch.long, device=self.trainer.device)
+                    # Create tensor directly on the correct GPU device
+                    input_tensor = torch.tensor([tokens_for_logging], dtype=torch.long, device=self.trainer.device)
                 else:
-                    size_tensor = torch.zeros(1, dtype=torch.long, device=self.trainer.device)
-
-                print(f"[Rank {rank}, Step {step}] Pre-broadcast size_tensor. Local value: {size_tensor.item()}")
-                dist.broadcast(size_tensor, src=0)
-                print(f"[Rank {rank}, Step {step}] Post-broadcast size_tensor. Synced value: {size_tensor.item()}")
-                
-                synced_size = size_tensor.item()
-
-                # --- Create tensors with synced size and broadcast ---
-                if rank == 0:
-                    input_tensor = input_tensor.to(self.trainer.device)
-                else:
+                    # Create placeholder on the correct GPU device
                     input_tensor = torch.empty((1, synced_size), dtype=torch.long, device=self.trainer.device)
 
                 print(f"[Rank {rank}, Step {step}] Tensor created on device {input_tensor.device}. Shape: {input_tensor.shape}")
-                print(f"[Rank {rank}, Step {step}] Pre-broadcast input_tensor.")
+                # This broadcast should now work as shapes and devices are correct.
                 dist.broadcast(input_tensor, src=0)
                 print(f"[Rank {rank}, Step {step}] Post-broadcast input_tensor.")
 
             with torch.no_grad():
                 if is_fsdp:
                     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-                    print(f"[Rank {rank}, Step {step}] Entering FSDP summon_full_params.")
                     with FSDP.summon_full_params(actual_model, recurse=True):
-                        print(f"[Rank {rank}, Step {step}] Inside summon_full_params. Starting forward pass.")
                         logits = actual_model(input_tensor).logits
-                        print(f"[Rank {rank}, Step {step}] Forward pass complete.")
                 else:
-                    logits = actual_model(input_tensor).logits
+                     # Non-distributed or non-FSDP case
+                    if rank == 0:
+                        input_tensor = torch.tensor([tokens_for_logging], dtype=torch.long, device=self.trainer.device)
+                        logits = actual_model(input_tensor).logits
 
             if rank == 0:
                 print(f"[Rank {rank}, Step {step}] Processing output on rank 0.")
@@ -143,7 +132,6 @@ class InferenceCallback(Callback):
             print(f"[Rank {rank}, Step {step}] Setting model back to train mode.")
             actual_model.train()
             if is_distributed():
-                print(f"[Rank {rank}, Step {step}] Pre-final barrier.")
                 dist.barrier()
                 print(f"[Rank {rank}, Step {step}] Post-final barrier. Exiting run_inference.")
 
