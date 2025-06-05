@@ -95,42 +95,81 @@ class InferenceCallback(Callback):
             print(f"[Step {step}] Input tensor created on CPU. Time: {time.time() - start_time:.3f}s")
             
             with torch.no_grad():
-                # For OLMo Core's FSDP, we can directly use the model without special context management
-                print(f"[Step {step}] Using OLMo Core FSDP direct inference...")
-                
-                # Get device and move tensor
-                device = next(actual_model.parameters()).device
-                print(f"[Step {step}] Model device: {device}")
-                input_tensor = input_tensor.to(device, non_blocking=True)
-                print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
-                
-                # Add CUDA synchronization for safety
-                if device.type == "cuda":
-                    torch.cuda.synchronize()
-                    print(f"[Step {step}] CUDA synchronized. Time: {time.time() - start_time:.3f}s")
-                
-                # Direct forward pass - OLMo Core FSDP handles parameter management internally
-                print(f"[Step {step}] Starting direct forward pass...")
-                forward_start = time.time()
-                
-                try:
-                    # The key insight: OLMo Core's FSDP works without summon_full_params
-                    logits = actual_model(input_tensor)
-                    forward_time = time.time() - forward_start
-                    print(f"[Step {step}] Forward pass completed in {forward_time:.3f}s")
+                if is_fsdp:
+                    print(f"[Step {step}] Using FSDP summon_full_params for inference...")
+                    # For FSDP inference, we need to use summon_full_params to avoid deadlocks
+                    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
                     
-                    # Process output
-                    next_token_logits = logits[0, -1, :] / 0.8
-                    next_token_logits[0] = -float("inf")
-                    probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                    next_token = torch.multinomial(probs, 1).item()
-                    generated = tokens + [next_token]
+                    # Use summon_full_params context to ensure all parameters are available
+                    with FSDP.summon_full_params(actual_model, recurse=True):
+                        print(f"[Step {step}] FSDP parameters summoned. Time: {time.time() - start_time:.3f}s")
+                        
+                        # Move tensor to device after summon_full_params
+                        device = next(actual_model.parameters()).device
+                        print(f"[Step {step}] Model device: {device}")
+                        input_tensor = input_tensor.to(device, non_blocking=True)
+                        print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
+                        
+                        # Add CUDA synchronization for safety
+                        if device.type == "cuda":
+                            torch.cuda.synchronize()
+                            print(f"[Step {step}] CUDA synchronized. Time: {time.time() - start_time:.3f}s")
+                        
+                        # Forward pass within FSDP context
+                        print(f"[Step {step}] Starting FSDP forward pass...")
+                        forward_start = time.time()
+                        
+                        try:
+                            logits = actual_model(input_tensor)
+                            forward_time = time.time() - forward_start
+                            print(f"[Step {step}] Forward pass completed in {forward_time:.3f}s")
+                            
+                            # Process output
+                            next_token_logits = logits[0, -1, :] / 0.8
+                            next_token_logits[0] = -float("inf")
+                            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                            next_token = torch.multinomial(probs, 1).item()
+                            generated = tokens + [next_token]
+                            
+                        except Exception as forward_error:
+                            print(f"[Step {step}] FSDP forward pass error: {forward_error}")
+                            import traceback
+                            traceback.print_exc()
+                            return
+                else:
+                    print(f"[Step {step}] Using regular inference for non-FSDP model...")
+                    # Get device and move tensor
+                    device = next(actual_model.parameters()).device
+                    print(f"[Step {step}] Model device: {device}")
+                    input_tensor = input_tensor.to(device, non_blocking=True)
+                    print(f"[Step {step}] Input tensor moved to device. Time: {time.time() - start_time:.3f}s")
                     
-                except Exception as forward_error:
-                    print(f"[Step {step}] Forward pass error: {forward_error}")
-                    import traceback
-                    traceback.print_exc()
-                    return
+                    # Add CUDA synchronization for safety
+                    if device.type == "cuda":
+                        torch.cuda.synchronize()
+                        print(f"[Step {step}] CUDA synchronized. Time: {time.time() - start_time:.3f}s")
+                    
+                    # Direct forward pass for non-FSDP case
+                    print(f"[Step {step}] Starting direct forward pass...")
+                    forward_start = time.time()
+                    
+                    try:
+                        logits = actual_model(input_tensor)
+                        forward_time = time.time() - forward_start
+                        print(f"[Step {step}] Forward pass completed in {forward_time:.3f}s")
+                        
+                        # Process output
+                        next_token_logits = logits[0, -1, :] / 0.8
+                        next_token_logits[0] = -float("inf")
+                        probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                        next_token = torch.multinomial(probs, 1).item()
+                        generated = tokens + [next_token]
+                        
+                    except Exception as forward_error:
+                        print(f"[Step {step}] Forward pass error: {forward_error}")
+                        import traceback
+                        traceback.print_exc()
+                        return
                 
                 print(f"[Step {step}] Generation completed. Time: {time.time() - start_time:.3f}s")
                 
