@@ -1,6 +1,8 @@
 import torch
 import torch.distributed as dist
 from transformers import AutoTokenizer
+# Correct FSDP import from PyTorch
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from olmo_core.train.callbacks import Callback
 import wandb
 from olmo_core.distributed.utils import is_distributed, get_rank
@@ -27,9 +29,6 @@ class InferenceCallback(Callback):
             if not is_distributed() or get_rank() == 0:
                 print("Running pre_train inference...")
                 self.run_inference(0)
-        else:
-            if not is_distributed() or get_rank() == 0:
-                print("Skipping pre_train inference.")
 
     def post_step(self):
         if self.trainer.global_step > 0 and self.trainer.global_step % self.interval == 0:
@@ -37,87 +36,79 @@ class InferenceCallback(Callback):
 
     def run_inference(self, step):
         """
-        Final robust FSDP-safe inference callback with a manual auto-regressive generation loop.
+        Wrapper function that ensures model mode is set correctly and generation only runs on rank 0.
         """
         rank = get_rank() if is_distributed() else 0
         actual_model = self.trainer.train_module.model
         is_fsdp = hasattr(actual_model, '_fsdp_enabled') or 'FSDP' in str(type(actual_model))
 
         actual_model.eval()
-
         try:
-            # Generation logic is performed only on rank 0.
-            # Other ranks will wait at the final barrier.
+            # All generation logic happens on rank 0. Other ranks wait at the barrier in 'finally'.
             if rank == 0:
-                if self.tokenizer is None:
-                    print("Tokenizer not available on rank 0. Skipping inference.")
-                    return
-
-                # Select a prompt and tokenize it
-                if self.inference_mode == "cycle":
-                    prompt = self.prompts[step % len(self.prompts)]
-                elif self.inference_mode == "random":
+                if self.inference_mode == "all":
+                    for i, prompt in enumerate(self.prompts):
+                        self._run_single_inference(prompt, step, i, actual_model, is_fsdp)
+                else: # 'random' or default to first prompt
                     prompt = random.choice(self.prompts)
-                else:
-                    prompt = self.prompts[0]
-
-                # Initial input for the generation loop
-                input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(self.trainer.device)
-                generated_ids = input_ids.clone()
-
-                # --- Manual Auto-Regressive Generation Loop ---
-                with torch.no_grad():
-                    # The FSDP context needs to wrap the model call inside the loop
-                    if is_fsdp:
-                        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-                        with FSDP.summon_full_params(actual_model, recurse=True, offload_to_cpu=False):
-                            # The olmo_core model uses a KV cache for efficient generation.
-                            # We pass `use_cache=True` to get the `past_key_values`.
-                            # On the first pass, `past_key_values` is None.
-                            past_key_values = None
-                            for _ in range(self.max_new_tokens):
-                                # The forward method of the olmo_core model returns (logits, past_key_values)
-                                # when use_cache is True.
-                                logits, past_key_values = actual_model(
-                                    input_ids=input_ids, past_key_values=past_key_values, use_cache=True
-                                )
-
-                                # Get the logits for the last token and sample the next one
-                                next_token_logits = logits[:, -1, :] / 0.8
-                                next_token_logits[:, self.tokenizer.pad_token_id] = -float("inf")
-                                probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                                next_token = torch.multinomial(probs, num_samples=1)
-
-                                # Append the new token to our generated sequence
-                                generated_ids = torch.cat([generated_ids, next_token], dim=1)
-
-                                # The next input to the model is just the newly generated token
-                                input_ids = next_token
-                    else: # Non-FSDP path
-                        # This logic would be the same but without the FSDP context manager
-                        past_key_values = None
-                        for _ in range(self.max_new_tokens):
-                            logits, past_key_values = actual_model(
-                                input_ids=input_ids, past_key_values=past_key_values, use_cache=True
-                            )
-                            next_token_logits = logits[:, -1, :] / 0.8
-                            next_token_logits[:, self.tokenizer.pad_token_id] = -float("inf")
-                            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                            next_token = torch.multinomial(probs, num_samples=1)
-                            generated_ids = torch.cat([generated_ids, next_token], dim=1)
-                            input_ids = next_token
-
-
-                decoded = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
-                print(f"[Step {step}] Generated: {decoded}")
-
-                if wandb.run is not None:
-                    wandb.log({f"inference/step_{step}/full_text": decoded}, step=step)
+                    self._run_single_inference(prompt, step, 0, actual_model, is_fsdp)
         finally:
-            # All ranks must set the model to train() and wait at a barrier
             actual_model.train()
             if is_distributed():
                 dist.barrier()
+
+    def _run_single_inference(self, prompt: str, step: int, prompt_idx: int, model, is_fsdp: bool):
+        """
+        Adapts the user's working single-GPU generation loop for FSDP.
+        """
+        if self.tokenizer is None:
+            return
+
+        print(f"[Step {step}] Generating from prompt {prompt_idx+1}: '{prompt[:50]}...'")
+        
+        # Initial tokenization
+        # The user's logic does not use a KV cache, so we re-tokenize the whole sequence each time.
+        # We will replicate that here for correctness.
+        device = self.trainer.device
+        generated_tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
+
+        with torch.no_grad():
+            # The generation loop
+            for i in range(self.max_new_tokens):
+                input_tensor = torch.tensor([generated_tokens], device=device)
+
+                # This is the key FSDP change: wrap the model call in the FSDP context manager.
+                if is_fsdp:
+                    with FSDP.summon_full_params(model, recurse=True, offload_to_cpu=False):
+                        logits = model(input_tensor)
+                else:
+                    logits = model(input_tensor)
+                
+                # Get logits for the very last token
+                next_token_logits = logits[0, -1, :]
+                
+                # Apply temperature scaling
+                next_token_logits = next_token_logits / 0.8
+                
+                # Suppress special tokens
+                next_token_logits[self.tokenizer.pad_token_id] = -float("inf")
+                
+                # Sample the next token
+                probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
+                next_token = torch.multinomial(probs, 1).item()
+
+                # Stop if EOS token is generated
+                if next_token == self.tokenizer.eos_token_id:
+                    print(f"EOS token generated at step {i+1}. Stopping.")
+                    break
+                
+                generated_tokens.append(next_token)
+
+        decoded_text = self.tokenizer.decode(generated_tokens)
+        print(f"[Step {step}] Generated: {decoded_text}")
+        
+        if wandb.run is not None:
+            wandb.log({f"inference/step_{step}/prompt_{prompt_idx}": prompt, f"inference/step_{step}/generated_{prompt_idx}": decoded_text}, step=step)
 
 # import torch
 # import torch.distributed as dist
