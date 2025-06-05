@@ -4,6 +4,7 @@ from olmo_core.train.callbacks import Callback
 import wandb
 from olmo_core.distributed.utils import is_distributed, get_rank
 import time
+import torch.distributed as dist
 
 class InferenceCallback(Callback):
     def __init__(self, model, tokenizer_config, prompts, interval, inference_mode="all", skip_pre_train=False):
@@ -67,6 +68,8 @@ class InferenceCallback(Callback):
             # Check model state
             print(f"[Step {step}] Model training mode: {actual_model.training}")
             
+            dist.barrier()  # Ensure all ranks are synchronized before moving to device
+
             # Set model to eval mode
             print(f"[Step {step}] Setting model to eval mode...")
             actual_model.eval()
@@ -94,6 +97,8 @@ class InferenceCallback(Callback):
             input_tensor = torch.tensor([tokens], dtype=torch.long)
             print(f"[Step {step}] Input tensor created on CPU. Time: {time.time() - start_time:.3f}s")
             
+
+
             with torch.no_grad():
                 if is_fsdp:
                     print(f"[Step {step}] Using FSDP summon_full_params for inference...")
