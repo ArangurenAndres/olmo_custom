@@ -36,7 +36,7 @@ class InferenceCallback(Callback):
             self.run_inference(self.trainer.global_step)
 
     def run_inference(self, step):
-        """Final, robust FSDP-safe inference for any environment."""
+        """Final, robust FSDP-safe inference for the OLMo model."""
         rank = get_rank() if is_distributed() else 0
         actual_model = self.trainer.train_module.model
         is_fsdp = hasattr(actual_model, '_fsdp_enabled') or 'FSDP' in str(type(actual_model))
@@ -50,61 +50,54 @@ class InferenceCallback(Callback):
             tokens = []
             prompt_for_logging = ""
 
-            # Step 1: Rank 0 prepares data and broadcasts size. All on GPU.
-            if is_distributed():
-                if rank == 0:
-                    if self.tokenizer is None:
-                        size_tensor = torch.tensor([-1], dtype=torch.long, device=self.trainer.device)
-                    else:
-                        if self.inference_mode == "cycle":
-                            prompt = self.prompts[step % len(self.prompts)]
-                        elif self.inference_mode == "random":
-                            prompt = random.choice(self.prompts)
-                        else:
-                            prompt = self.prompts[0]
-                        prompt_for_logging = prompt
-                        tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
-                        size_tensor = torch.tensor([len(tokens)], dtype=torch.long, device=self.trainer.device)
+            if rank == 0:
+                if self.tokenizer is None:
+                    if is_distributed():
+                        # Signal an error to other ranks
+                        dist.broadcast(torch.tensor([-1], device=self.trainer.device), src=0)
+                    return
+                # Tokenize and prepare data
+                if self.inference_mode == "cycle":
+                    prompt = self.prompts[step % len(self.prompts)]
+                elif self.inference_mode == "random":
+                    prompt = random.choice(self.prompts)
                 else:
-                    size_tensor = torch.zeros(1, dtype=torch.long, device=self.trainer.device)
+                    prompt = self.prompts[0]
+                prompt_for_logging = prompt
+                tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
 
+            if is_distributed():
+                # Step 1: Broadcast tensor size
+                size_tensor = torch.tensor([len(tokens) if rank == 0 else 0], dtype=torch.long, device=self.trainer.device)
                 dist.broadcast(size_tensor, src=0)
                 synced_size = size_tensor.item()
                 if synced_size == -1: return
 
+                # Step 2: Create tensors and broadcast data
                 if rank == 0:
                     input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.trainer.device)
                 else:
                     input_tensor = torch.empty((1, synced_size), dtype=torch.long, device=self.trainer.device)
                 dist.broadcast(input_tensor, src=0)
-
-            # Non-distributed path
-            else:
-                 if self.tokenizer is not None:
-                    prompt = self.prompts[0]
-                    prompt_for_logging = prompt
-                    tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
+            else: # Non-distributed case
+                if self.tokenizer:
                     input_tensor = torch.tensor([tokens], dtype=torch.long, device=self.trainer.device)
 
+            if input_tensor is None: return
 
-            if input_tensor is None:
-                if rank == 0: print("Input tensor is None, skipping inference.")
-                return
-
-            # Step 2: FSDP-aware forward pass.
+            # Step 3: FSDP-aware forward pass with correct output handling
             with torch.no_grad():
                 if is_fsdp:
                     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+                    # Use summon_full_params to gather the model for inference
                     with FSDP.summon_full_params(actual_model, recurse=True):
-                        # --- THE FIX IS HERE ---
-                        # The model returns a raw tensor, not an object with a .logits attribute.
+                        # THE FIX: The model returns a raw tensor, not an object with .logits
                         logits = actual_model(input_tensor)
                 else:
                     # Non-FSDP forward pass
                     logits = actual_model(input_tensor)
 
-
-            # Step 3: Rank 0 processes and logs the output.
+            # Step 4: Rank 0 processes and logs the output
             if rank == 0:
                 print(f"[Rank {rank}, Step {step}] Processing output.")
                 next_token_logits = logits[0, -1, :] / 0.8
