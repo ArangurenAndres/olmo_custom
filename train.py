@@ -199,8 +199,34 @@ def main():
         )
         print(f"Rank {get_rank()}: Succesfully created Inference Callback")
 
-        downstream_eval_cb_config = None
-        lm_eval_callback_config = None
+        downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
+                tasks=downstream_eval_tasks,
+                tokenizer=tokenizer_config,
+                eval_interval=config["steps"]/config["evaluation_times"],
+                eval_on_startup=False,  # Disable eval_on_startup to avoid blocking
+                log_interval=5,
+                enabled=True
+            )
+
+        lm_eval_dataset_config = NumpyDatasetConfig(
+            paths=[config["data_dir"] + "/c4_validation.npy"],
+            tokenizer=tokenizer_config,
+            sequence_length=config["sequence_length"], # Assuming sequence_length is in your config
+            name=NumpyDatasetType.padded_fsl,
+            work_dir=work_dir,
+            metadata=[{"label": "c4_validation_custom"}]
+        )
+
+        lm_eval_callback_config = LMEvaluatorCallbackConfig(
+            eval_dataset=lm_eval_dataset_config,
+            eval_interval=config["steps"] / config.get("evaluation_times", 1), # Default to 1 if not set
+            eval_on_startup=True,
+            log_interval=5,
+            enabled=True
+        )
+
+        # downstream_eval_cb_config = None
+        # lm_eval_callback_config = None
 
         # Evaluation tasks (only on rank 0)
 
