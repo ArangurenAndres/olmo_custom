@@ -6,6 +6,14 @@ from olmo_core.distributed.utils import is_distributed, get_rank
 import time
 import torch.distributed as dist
 
+import torch
+from transformers import AutoTokenizer
+from olmo_core.train.callbacks import Callback
+import wandb
+from olmo_core.distributed.utils import is_distributed, get_rank
+import time
+import torch.distributed as dist
+
 class InferenceCallback(Callback):
     def __init__(self, model, tokenizer_config, prompts, interval, inference_mode="all", skip_pre_train=False):
         self.model = model
@@ -14,13 +22,13 @@ class InferenceCallback(Callback):
         self.interval = int(interval)
         self.inference_mode = inference_mode
         self.skip_pre_train = skip_pre_train
-        
+
         # Initialize tokenizer only on rank 0
         if not is_distributed() or get_rank() == 0:
             self.tokenizer = AutoTokenizer.from_pretrained("allenai/gpt-neox-olmo-dolma-v1_5")
         else:
             self.tokenizer = None
-            
+
         print(f"InferenceCallback initialized with interval: {self.interval}, skip_pre_train: {self.skip_pre_train}")
 
     def pre_train(self):
@@ -31,19 +39,16 @@ class InferenceCallback(Callback):
             print("Skipping pre_train inference in distributed mode")
 
     def post_step(self):
-        # All ranks call this, but only rank 0 executes inference
-        should_run = (not is_distributed() or get_rank() == 0) and \
-                    self.trainer.global_step % self.interval == 0 and \
-                    self.trainer.global_step > 0
-        
-        if should_run:
-            print(f"post_step: Running inference at step {self.trainer.global_step}")
+        # All ranks should call this method, and run_inference will handle rank-specific logic.
+        if self.trainer.global_step > 0 and self.trainer.global_step % self.interval == 0:
+            if get_rank() == 0:
+                print(f"post_step: Running inference at step {self.trainer.global_step}")
             self.run_inference(self.trainer.global_step)
 
     def run_inference(self, step):
         """FSDP-safe inference implementation with correct synchronization."""
         start_time = time.time()
-        
+
         # Let all ranks get the model and check for FSDP
         actual_model = self.trainer.train_module.model
         is_fsdp = hasattr(actual_model, '_fsdp_enabled') or 'FSDP' in str(type(actual_model))
@@ -62,17 +67,17 @@ class InferenceCallback(Callback):
             tokens_for_logging = []
             if get_rank() == 0:
                 print(f"[Step {step}] ========== STARTING FSDP-SAFE INFERENCE ON RANK 0 ==========")
-                
+
                 if self.tokenizer is None:
                     print(f"[Step {step}] Rank 0 has no tokenizer, aborting.")
                     # We need a way to signal other ranks to exit gracefully.
                     # A simple tensor broadcast can work.
                     if is_distributed():
-                        dist.broadcast(torch.tensor([1]), src=0) # Signal error
+                        dist.broadcast(torch.tensor([1], device=self.trainer.device), src=0) # Signal error
                     return
-                
+
                 if is_distributed():
-                    dist.broadcast(torch.tensor([0]), src=0) # Signal success
+                    dist.broadcast(torch.tensor([0], device=self.trainer.device), src=0) # Signal success
 
                 # Select prompt and tokenize
                 if self.inference_mode == "cycle":
@@ -82,30 +87,30 @@ class InferenceCallback(Callback):
                     prompt = random.choice(self.prompts)
                 else:  # "all" mode
                     prompt = self.prompts[0]
-                
+
                 prompt_for_logging = prompt
                 print(f"[Step {step}] Selected prompt: {prompt[:50]}...")
 
                 tokens = [t for t in self.tokenizer.encode(prompt) if t != 0]
                 tokens_for_logging = tokens
                 input_tensor = torch.tensor([tokens], dtype=torch.long)
-            
+
             # --- Synchronize and distribute the input tensor to all ranks ---
             if is_distributed():
                 # Check if rank 0 had an issue
-                error_signal = torch.tensor([0])
+                error_signal = torch.tensor([0], device=self.trainer.device)
                 dist.broadcast(error_signal, src=0)
                 if error_signal.item() == 1:
                     # Rank 0 had an error, all ranks should exit
                     return
-                
+
                 # Broadcast the size of the tensor first
-                tensor_size = torch.tensor([input_tensor.shape[1] if get_rank() == 0 else 0], dtype=torch.long)
+                tensor_size = torch.tensor([input_tensor.shape[1] if get_rank() == 0 else 0], dtype=torch.long, device=self.trainer.device)
                 dist.broadcast(tensor_size, src=0)
 
                 # Create a placeholder tensor on other ranks
                 if get_rank() != 0:
-                    input_tensor = torch.empty((1, tensor_size.item()), dtype=torch.long)
+                    input_tensor = torch.empty((1, tensor_size.item()), dtype=torch.long, device=self.trainer.device)
 
                 # Broadcast the tensor itself
                 dist.broadcast(input_tensor, src=0)
@@ -124,7 +129,7 @@ class InferenceCallback(Callback):
                         logits = actual_model(input_tensor).logits
                 else:
                     logits = actual_model(input_tensor).logits
-            
+
             # --- Rank 0 processes the result and logs ---
             if get_rank() == 0:
                 print(f"[Step {step}] Forward pass completed on all ranks.")
@@ -138,13 +143,13 @@ class InferenceCallback(Callback):
                 # Decode and print result
                 decoded = self.tokenizer.decode(generated)
                 print(f"[Step {step}] Generated: {decoded}")
-                
+
                 # Log to wandb if available
                 if wandb.run is not None:
                     original_prompt_token_count = len(tokens_for_logging)
                     newly_generated_tokens = generated[original_prompt_token_count:]
                     generated_text_only = self.tokenizer.decode(newly_generated_tokens)
-                    
+
                     wandb.log({
                         f"inference/step_{step}/prompt": prompt_for_logging,
                         f"inference/step_{step}/generated": generated_text_only,
