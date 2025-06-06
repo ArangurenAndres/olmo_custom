@@ -9,8 +9,8 @@ sequence_length: 1024
 # batch_size is a fallback if 'global_batch_size' in the Training Hyperparameters section is not specified.
 # It represents the number of sequences in a global batch (for one optimizer step).
 batch_size: 96
-micro_batch_size: 2048 # Number of sequences processed per device in a single forward/backward pass.
-steps: 10000
+micro_batch_size: 8192 # Number of sequences processed per device in a single forward/backward pass.
+steps: 1000
 
 #set to - (minus) to disable evaluation and inference
 evaluation_times: 1 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
