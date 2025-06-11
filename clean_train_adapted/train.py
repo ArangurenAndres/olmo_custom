@@ -105,6 +105,12 @@ def main():
         config=config
     )
 
+    # Print model parameters
+    print(f"Model Total Parameters: {model.num_params}")
+    print(f"Model Non-Embedding Parameters: {model.num_non_embedding_params}")
+    if hasattr(model, 'num_trainable_params'):
+        print(f"Model Trainable Parameters: {model.num_trainable_params}")
+
     
     # IP ADRESS PROBLEM SOLVED with setting the token ID 0 to zeros and logit bias to large negative
     apply_special_token_handling(model)
@@ -214,10 +220,10 @@ def main():
         cancel_check_interval=5,
         max_duration=Duration.steps(config["steps"]),
         device=str(device),
-    ).with_callback("wandb", wandb_cb
-    ).with_callback("inference", inference_cb
-    ).with_callback("downstream_eval", downstream_eval_cb_config
-    ).with_callback("lm_evaluator", lm_eval_callback_config)
+    )#.with_callback("wandb", wandb_cb
+    #).with_callback("inference", inference_cb
+    #).with_callback("downstream_eval", downstream_eval_cb_config
+    #).with_callback("lm_evaluator", lm_eval_callback_config)
     
 
     trainer = trainer_config.build(train_module=train_module, data_loader=data_loader)

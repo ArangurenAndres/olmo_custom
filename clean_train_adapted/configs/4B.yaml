@@ -1,7 +1,7 @@
 # config.yaml
 
 wandb_project: "all_in_olmo"
-wandb_name: "4B_LWS"
+wandb_name: "4B_LWS_deep"
 train_data_file: "4B.npy"
 
 #------------------------------------------------------------------------------------------------
@@ -23,12 +23,19 @@ n_kv_heads: 4                             # Number of key/value heads for GQA. M
                                           # Make sure build_model passes this to TransformerConfig.
 # Layer-Wise Scaling parameters
 
+n_layers: 18
+
+
 learning_rate: 0.001
 # INCREASE LEARNING RATE for small runs <5B tokens
 
-fnn_scalars: [2.0, 5.3]
-qkv_scalars: [0.5,2.0]
+
+fnn_scalars: [1.0, 4.0]
+qkv_scalars: [0.5,1.0]
 output_scalars: [1.0, 1.0]
+#fnn_scalars: [2.0, 5.3]
+#qkv_scalars: [0.5,2.0]
+#output_scalars: [1.0, 1.0]
 #fnn_scalars: [1.0, 2.0]
 #qkv_scalars: [0.5, 1.0]
 #output_scalars: [0.8, 1.2]

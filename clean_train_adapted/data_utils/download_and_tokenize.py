@@ -12,13 +12,13 @@ import itertools
 from olmo_core.data import TokenizerConfig
 
 
-def _download_and_tokenize_wiki(wiki_data_path, sequence_length, total_tokens_with_margin):
+def _download_and_tokenize(data_path, sequence_length, total_tokens_with_margin):
     """
     Download and tokenize Wikipedia data efficiently, collecting tokens up to
     total_tokens_with_margin.
 
     Args:
-        wiki_data_path: Path to save tokenized data
+        data_path: Path to save tokenized data
         sequence_length: Sequence length
         total_tokens_with_margin: Total tokens needed with margin
     """
@@ -32,6 +32,8 @@ def _download_and_tokenize_wiki(wiki_data_path, sequence_length, total_tokens_wi
     # Get tokenizer configuration from OLMo-core
     tokenizer_config = TokenizerConfig.gpt_neox_olmo_dolma_v1_5()
     eos_token_id = tokenizer_config.eos_token_id
+
+
 
     # Download Wikipedia dataset
     print("Downloading Wikipedia dataset...")
@@ -143,5 +145,5 @@ def _download_and_tokenize_wiki(wiki_data_path, sequence_length, total_tokens_wi
     print(f"Created {sequences.shape[0]:,} sequences of length {sequence_length}")
 
     # Save tokenized data
-    np.save(wiki_data_path, sequences)
-    print(f"Saved tokenized data to {wiki_data_path}") 
+    np.save(data_path, sequences)
+    print(f"Saved tokenized data to {data_path}") 

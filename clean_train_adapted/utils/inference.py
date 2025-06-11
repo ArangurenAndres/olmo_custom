@@ -45,12 +45,12 @@ class InferenceCallback(Callback):
             logits = self.model(input_tensor)
             for _ in range(50):
                 next_token_logits = logits[0, -1, :]
-                next_token_logits = next_token_logits / 0.8
+                #next_token_logits = next_token_logits / 0.8
                 if next_token_logits.size(0) > 0:
                     next_token_logits[0] = -float("inf")
 
                 probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
-                token = torch.multinomial(probs, 1).item()
+                token = torch.argmax(probs).item() #torch.multinomial(probs, 1).item() if want not greedy
                 if token == self.tokenizer_config.eos_token_id:
                     break
                 generated.append(token)

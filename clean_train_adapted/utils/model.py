@@ -11,6 +11,7 @@ def build_model(vocab_size, device, config):
 
     model_config = TransformerConfig.olmo2_190M(
         vocab_size=vocab_size,
+        n_layers=config["n_layers"],
         dtype=DType.bfloat16 if device.type == "cuda" else DType.float32,
         n_kv_heads=n_kv_heads,
         #use_flash=True,
