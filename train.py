@@ -8,7 +8,7 @@ This script coordinates the training process by importing and using modules for:
 4. Training execution
 
 Total tokens trained = batch_size * steps * sequence_length 
-- batch size is dependent on the GPU memory (higher always better)
+- micro batch size is dependent on the GPU memory (higher always better)
 - steps is dependent on the number of tokens to train
 - sequence length is fixed at 1024
 
@@ -21,6 +21,7 @@ import pprint
 import time
 import yaml
 import shutil
+import logging
 
 from utils.model import build_model, build_train_module_with_fsdp
 from datetime import timedelta
@@ -52,6 +53,8 @@ def main():
         backend="cpu:gloo,cuda:nccl",
         timeout=timedelta(minutes=30)
     )
+    # Silence console output from all INFO-level loggers (ConsoleLogger, Evaluator, etc.)
+    logging.getLogger().setLevel(logging.WARNING)
     try:
         config = load_config()
         seed_all(config["seed"])
@@ -134,49 +137,6 @@ def main():
             "mmlu_stem", "basic_arithmetic", "gsm8k_gold_bpb_5shot"
         ]
 
-        # # Create callbacks AFTER variable definitions but BEFORE next barrier
-        # if not is_distributed() or get_rank() == 0:
-        #     print(f"Rank {get_rank()}: Creating callbacks...")
-            
-        #     wandb_cb = WandBCallback(
-        #         project=config["wandb_project"],
-        #         name=f"{config['wandb_name']}-{timestamp}",
-        #         entity=None,
-        #         enabled=True,
-        #         cancel_check_interval=10,
-        #         config=config
-        #     )
-        #     print(f"Rank {get_rank()}: Succesfully created WandB Callback")
-        #     inference_cb = InferenceCallback(
-        #         model=model,
-        #         tokenizer_config=tokenizer_config,
-        #         prompts=inference_prompts,
-        #         interval=config["steps"]/config["inference_times"],
-        #         inference_mode=inference_mode,
-        #         skip_pre_train=is_distributed()
-        #     )
-        #     print(f"Rank {get_rank()}: Succesfully created Inference Callback")
-
-        #     downstream_eval_cb_config = None
-        #     lm_eval_callback_config = None
-        #     # downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
-        #     #     tasks=downstream_eval_tasks,
-        #     #     tokenizer=tokenizer_config,
-        #     #     eval_interval=config["steps"]/config["evaluation_times"],
-        #     #     eval_on_startup=False,
-        #     #     log_interval=5,
-        #     #     enabled=True
-        #     # )
-        #     # print(f"Rank {get_rank()}: Succesfully created Eval Callback")
-        #     # lm_eval_callback_config = None  # Temporarily disabled
-            
-        #     print(f"Rank {get_rank()}: Callbacks created successfully")
-        # else:
-        #     print(f"Rank {get_rank()}: Skipping callback creation (non-zero rank)")
-        #     wandb_cb = None
-        #     inference_cb = None
-        #     downstream_eval_cb_config = None
-        #     lm_eval_callback_config = None
 
         print(f"Rank {get_rank()}: Creating callbacks...")
         
@@ -208,8 +168,12 @@ def main():
                 enabled=True
             )
 
+
+        validation_path = os.path.join(config["data_dir"], "c4_validation.npy")
+        if not os.path.exists(validation_path):
+            raise FileNotFoundError(f"Validation dataset not found at {validation_path}. Please run data preparation with validation=True first.")
         lm_eval_dataset_config = NumpyDatasetConfig(
-            paths=[config["data_dir"] + "/c4_validation.npy"],
+            paths=[validation_path],
             tokenizer=tokenizer_config,
             sequence_length=config["sequence_length"], # Assuming sequence_length is in your config
             name=NumpyDatasetType.padded_fsl,
@@ -225,41 +189,7 @@ def main():
             enabled=True
         )
 
-        # downstream_eval_cb_config = None
-        # lm_eval_callback_config = None
-
-        # Evaluation tasks (only on rank 0)
-
-
-        # # Create inference callback (only on rank 0) - DISABLE pre_train inference for distributed
-        # if not is_distributed() or get_rank() == 0:
-        #     inference_cb = InferenceCallback(
-        #         model=model,
-        #         tokenizer_config=tokenizer_config,
-        #         prompts=inference_prompts,
-        #         interval=config["steps"]/config["inference_times"],
-        #         inference_mode=inference_mode,
-        #         skip_pre_train=is_distributed()  # Skip pre_train inference in distributed mode
-        #     )
-        # else:
-        #     inference_cb = None
-
-        # # Temporarily disable downstream evaluation to isolate the issue
-        # if not is_distributed() or get_rank() == 0:
-        #     # Disable evaluation during debugging
-            
-        #     # Original evaluation config (commented out for debugging)
-        #     downstream_eval_cb_config = DownstreamEvaluatorCallbackConfig(
-        #         tasks=downstream_eval_tasks,
-        #         tokenizer=tokenizer_config,
-        #         eval_interval=config["steps"]/config["evaluation_times"],
-        #         eval_on_startup=False,  # Disable eval_on_startup to avoid blocking
-        #         log_interval=5,
-        #         enabled=True
-        #     )
-        # else:
-        #     downstream_eval_cb_config = None
-        #     lm_eval_callback_config = None
+   
     
         # Add barrier AFTER callback creation to synchronize all ranks
         if is_distributed():
@@ -287,7 +217,7 @@ def main():
             if inference_cb:
                 trainer_config = trainer_config.with_callback("inference", inference_cb)
                 print(f"Rank {get_rank()}: Successfully added Inference Callback")
-            if downstream_eval_cb_config:
+            if downstream_eval_cb_config and "test" not in config["wandb_name"]:
                 trainer_config = trainer_config.with_callback("downstream_eval", downstream_eval_cb_config)
                 print(f"Rank {get_rank()}: Successfully added Downstream Eval Callback")
             if lm_eval_callback_config:

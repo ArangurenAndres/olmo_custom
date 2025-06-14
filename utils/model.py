@@ -20,7 +20,7 @@ def build_model(vocab_size, device, config):
         vocab_size=vocab_size,
         dtype=DType.bfloat16 if device.type == "cuda" else DType.float32,
         n_kv_heads=n_kv_heads,
-        #use_flash=True,
+       # use_flash=True,
         #init_method=InitMethod.normal   # GIVES AN ERROR IF SET   
     )
 
@@ -75,21 +75,20 @@ def build_train_module_with_fsdp(model, config):
         ]
     )
     
-    # Configure FSDP - Use DType enum values directly
+
+    # Configure DDP instead of FSDP
     dp_config = TransformerDataParallelConfig(
-        name=DataParallelType.fsdp,
+        name=DataParallelType.ddp,
         param_dtype=DType.bfloat16 if config.get("param_dtype", "bfloat16") == "bfloat16" else None,
-        reduce_dtype=DType.float32,  # Use DType enum directly
-        wrapping_strategy="by_block",
-        prefetch_factor=2,
-        # Remove 'limit_all_gathers' - not supported by TransformerDataParallelConfig
+        reduce_dtype=DType.float32,
     )
     
     train_module_config = TransformerTrainModuleConfig(
         optim=optimizer_config,
         dp_config=dp_config,
         max_sequence_length=config["sequence_length"],
-        rank_microbatch_size=config.get("rank_microbatch_size", 2048),
+        # Convert micro_batch_size (sequences) -> tokens for rank_microbatch_size
+        rank_microbatch_size=config["micro_batch_size"] * config["sequence_length"],
         compile_model=False,
         max_grad_norm=1.0  # Add gradient clipping
     )
