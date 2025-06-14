@@ -63,8 +63,8 @@ def main():
         # SETUP DATA DIRECTORIES and checkpoints dir, work dir
         timestamp = time.strftime('%m-%d_%H-%M')
         run_dir = os.path.join(config["data_dir"], "checkpoints", f"run_{timestamp}")
-        # save_dir = os.path.join("/scratch-shared/tmp.GcVy0pChFL", f"checkpoints_{timestamp}")
-        save_dir = os.path.join("train_run", f"checkpoints_{timestamp}")
+        save_dir = os.path.join("/scratch-shared/delight_team", f"checkpoints_{timestamp}")
+     #   save_dir = os.path.join("train_run", f"checkpoints_{timestamp}")
         work_dir = os.path.join(run_dir, "trainer_work_dir")
         os.makedirs(run_dir, exist_ok=True)
         os.makedirs(save_dir, exist_ok=True) 
@@ -202,7 +202,8 @@ def main():
             save_folder=save_dir,
             save_overwrite=True,
             work_dir=work_dir,
-            load_strategy=LoadStrategy.never,
+            load_strategy=LoadStrategy.if_available,
+            load_path=config["resume_from"],
             metrics_collect_interval=1,
             cancel_check_interval=5,
             max_duration=Duration.steps(config["steps"]),

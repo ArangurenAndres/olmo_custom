@@ -14,11 +14,12 @@ steps: 3000
 num_workers: 16
 
 
-
+# example of resume_from, leave none if not resuming:
+resume_from: train_run/checkpoints_06-14_16-39 
 
 #set to - (minus) to disable evaluation and inference
-evaluation_times: 2 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
-inference_times: 2   # Run inference 2 times (inference_interval = steps/inference_times)
+evaluation_times: 4 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
+inference_times: 4   # Run inference 2 times (inference_interval = steps/inference_times)
 
 # Group Query Attention (GQA)
 n_kv_heads: 12                             # Number of key/value heads for GQA. Must be <= n_heads.
