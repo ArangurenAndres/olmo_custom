@@ -11,6 +11,8 @@ from olmo_core.distributed.parallel import DataParallelType
 
 from olmo_core.distributed.utils import is_distributed, get_rank, get_world_size
 
+import logging
+
 
 def build_model(vocab_size, device, config):
     sequence_length = config["sequence_length"]
@@ -20,7 +22,7 @@ def build_model(vocab_size, device, config):
         vocab_size=vocab_size,
         dtype=DType.bfloat16 if device.type == "cuda" else DType.float32,
         n_kv_heads=n_kv_heads,
-        use_flash=True,
+        use_flash=config["use_flash_attn"],
         #init_method=InitMethod.normal   # GIVES AN ERROR IF SET   
     )
 
@@ -28,6 +30,37 @@ def build_model(vocab_size, device, config):
     model.activation_checkpointing_config = TransformerActivationCheckpointingConfig(
         mode=TransformerActivationCheckpointingMode.full
     )
+
+    # ---------------------------------------------------------
+    # Flash-Attention sanity check (easy-to-spot log message)
+    # ---------------------------------------------------------
+    def _log_flash_attention_status(m):
+        """Walk through all sub-modules, collect `module.attn.use_flash_attn` flags,
+        and emit a clear log. This is agnostic to model internals and works even
+        when layers are stored in `ModuleList`s or custom containers."""
+        flags = []
+        for sub in m.modules():
+            if hasattr(sub, "use_flash"):
+                flags.append(getattr(sub, "use_flash", None))
+                continue
+            attn = getattr(sub, "attn", None)
+            if attn is not None and hasattr(attn, "use_flash"):
+                flags.append(getattr(attn, "use_flash", None))
+
+        if not flags:  # could not find any attention modules
+            logging.warning("⚠️  Could not locate attention modules to verify Flash-Attention; skipping check.")
+            return
+
+        if all(flags):
+            logging.info("\n🔆 FLASH-ATTENTION ENABLED on ALL %d attention layers — fast kernels will be used.\n", len(flags))
+        else:
+            disabled_layers = [idx for idx, f in enumerate(flags) if not f]
+            message = f"Flash-Attention disabled on layers: {disabled_layers}"
+            logging.warning("\n❌ %s\n", message)
+
+    # Run the check only once (rank 0) to avoid duplicated messages in DDP
+    if not is_distributed() or get_rank() == 0:
+        _log_flash_attention_status(model)
 
 #    with torch.no_grad():
  #       model.embeddings.weight[0].zero_()

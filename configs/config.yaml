@@ -8,18 +8,19 @@ wandb_project: "test_runs"
 sequence_length: 1024
 # batch_size is a fallback if 'global_batch_size' in the Training Hyperparameters section is not specified.
 # It represents the number of sequences in a global batch (for one optimizer step).
-batch_size: 96 # has to be bigger if more GPU used (2 gpu used, at least double batch size compared to micro_batch_size)
-micro_batch_size: 24 # micro_batch_size = micro_batch_size * sequence_length 
+batch_size: 224 # has to be divisible with micro batch* numbre of GPUs
+micro_batch_size: 56 # micro_batch_size = micro_batch_size * sequence_length 
 steps: 3000
 num_workers: 16
 
+use_flash_attn: True
 
-# example of resume_from, leave none if not resuming:
-resume_from: train_run/checkpoints_06-14_16-39 
+# now saved at /scratch-shared/delight_team
+resume_from: None # train_run/checkpoints_06-14_16-39 
 
 #set to - (minus) to disable evaluation and inference
-evaluation_times: 4 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
-inference_times: 4   # Run inference 2 times (inference_interval = steps/inference_times)
+evaluation_times: 2 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
+inference_times: 2   # Run inference 2 times (inference_interval = steps/inference_times)
 
 # Group Query Attention (GQA)
 n_kv_heads: 12                             # Number of key/value heads for GQA. Must be <= n_heads.
@@ -40,7 +41,7 @@ output_scalars: [1.0, 1.0]
 verbose_scaling: True
 
 wandb_name: "test_run"
-train_data_file: "1B.npy"
+train_data_file: "4B.npy"
 
 # config.yaml additions
 distributed:
@@ -56,7 +57,7 @@ fsdp:
   cpu_offload: false
   
 # Checkpointing
-save_interval: 100
+save_interval: 100 # we're not actually using this, it's the default 250 now
 checkpoint_async: true
 
 # -----------------------------------------------------------------------------

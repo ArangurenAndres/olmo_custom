@@ -48,13 +48,22 @@ from olmo_core.distributed.utils import is_distributed, get_rank, get_world_size
 import torch.distributed as dist
 
 def main():
+
+    
     prepare_training_environment(
         seed=42,
         backend="cpu:gloo,cuda:nccl",
         timeout=timedelta(minutes=30)
     )
-    # Silence console output from all INFO-level loggers (ConsoleLogger, Evaluator, etc.)
-    logging.getLogger().setLevel(logging.WARNING)
+    
+
+    # After 2 minutes, reduce logging level to WARNING - because I want to see the mdoel details, but i dont want to see everysingle step
+    logging.getLogger().setLevel(logging.INFO)
+    start_time = time.time()
+    if time.time() - start_time > 60:  # 120 seconds = 2 minutes
+        logging.getLogger().setLevel(logging.WARNING)
+
+
     try:
         config = load_config()
         seed_all(config["seed"])
