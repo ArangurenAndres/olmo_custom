@@ -5,6 +5,8 @@ import itertools
 from datasets import load_dataset
 from transformers import AutoTokenizer
 from olmo_core.data import TokenizerConfig
+import torch
+from torch.utils.data import DataLoader, IterableDataset
 
 def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, tokenizer_processing_batch_size, dataset_proportions):
     """
@@ -16,10 +18,6 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
         sequence_length: Sequence length
         total_tokens_with_margin: Total tokens needed with margin
     """
-
-    #total_tokens_with_margin = 5_000_000_000
-   # tokenizer_processing_batch_size = 5000  # Number of articles/entries to tokenize at once
-
 
     # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(
@@ -112,9 +110,20 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
         print(f"Loading dataset {main_dataset_name} (subset: {subset_name}) with streaming...")
         try:
             if subset_name == "sciq":
-                current_dataset_object = load_dataset("allenai/sciq", split="train", streaming=True,cache_dir=os.environ.get("HF_DATASETS_CACHE"))
+                current_dataset_object = load_dataset(
+                    "allenai/sciq",
+                    split="train",
+                    streaming=True,
+                    cache_dir=os.environ.get("HF_DATASETS_CACHE"),
+                )
             else:
-                current_dataset_object = load_dataset( main_dataset_name, name=subset_name,  split="train", streaming=True,cache_dir=os.environ.get("HF_DATASETS_CACHE"))
+                current_dataset_object = load_dataset(
+                    main_dataset_name,
+                    name=subset_name,
+                    split="train",
+                    streaming=True,
+                    cache_dir=os.environ.get("HF_DATASETS_CACHE"),
+                )
 
             print(f"Successfully initiated streaming for {dataset_hf_name}.")
         except Exception as e:
@@ -126,31 +135,79 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
         list_of_token_arrays_for_current_dataset = []
         collected_tokens_for_current_dataset = 0
             
-        dataset_iterator = current_dataset_object.iter(batch_size=tokenizer_processing_batch_size)
+        # ------------------ PyTorch DataLoader Setup ------------------
+        class HFIterableDatasetWrapper(IterableDataset):
+            """Wrap a HuggingFace streaming (Iterable) dataset so it can be fed to a PyTorch DataLoader."""
 
-        with tqdm(total=tokens_to_collect_for_this_dataset, desc="Overall token collection", unit="token") as overall_progress_bar:
+            def __init__(self, hf_iter_dataset):
+                self.hf_iter_dataset = hf_iter_dataset
 
-            for raw_batch in dataset_iterator:
-                
-               # if "text" not in raw_batch:
-               #     print(f"Warning: Column 'text' not found in a sample. Skipping this sample.")
-               #     # print(f"Sample keys available: {list(sample.keys())}") # Uncomment to see available keys
-               #     continue
+            def __iter__(self):
+                worker_info = torch.utils.data.get_worker_info()
+                if worker_info is None:
+                    # Single-worker behaviour – iterate over the full dataset
+                    return iter(self.hf_iter_dataset)
+                else:
+                    # In multiple-worker setting, shard dataset by worker id
+                    return iter(
+                        self.hf_iter_dataset.shard(
+                            num_shards=worker_info.num_workers,
+                            index=worker_info.id,
+                        )
+                    )
 
-                tokenized_batch_output = tokenize_function(raw_batch, dataset_hf_name)
-                tokens_in_batch = list(itertools.chain.from_iterable(tokenized_batch_output['input_ids']))
-                if not tokens_in_batch:
+        def collate_tokens_pytorch(batch):
+            """Custom collate_fn that tokenises a list of raw samples and flattens to a 1-D NumPy array."""
+            # Convert list[dict[str, Any]] -> dict[str, list[Any]] expected by tokenize_function
+            aggregated = {}
+            for sample in batch:
+                for key, value in sample.items():
+                    aggregated.setdefault(key, []).append(value)
+
+            tokenized_batch_output = tokenize_function(aggregated, dataset_hf_name)
+            tokens_flat = list(itertools.chain.from_iterable(tokenized_batch_output["input_ids"]))
+            return np.array(tokens_flat, dtype=np.int32)
+
+        torch_dataset = HFIterableDatasetWrapper(current_dataset_object)
+
+        # Use a conservative number of workers to avoid hammering the HF Hub with too many
+        # concurrent requests (which can trigger 429 errors).  
+        # Default to **1** but allow override via env-var STREAMING_NUM_WORKERS.
+        if "dclm" or "wiki" in dataset_hf_name.lower():
+            num_workers_dl = int(os.getenv("STREAMING_NUM_WORKERS", "8"))
+        else:
+            num_workers_dl = int(os.getenv("STREAMING_NUM_WORKERS", "1"))
+
+        data_loader = DataLoader(
+            torch_dataset,
+            batch_size=tokenizer_processing_batch_size,
+            num_workers=num_workers_dl,
+            collate_fn=collate_tokens_pytorch,
+            prefetch_factor=2 if num_workers_dl > 0 else None,
+            pin_memory=False,
+        )
+
+        with tqdm(
+            total=tokens_to_collect_for_this_dataset,
+            desc="Overall token collection",
+            unit="token",
+        ) as overall_progress_bar:
+
+            for tokens_np in data_loader:
+                if tokens_np.size == 0:
                     continue
 
-                list_of_token_arrays_for_current_dataset.append(np.array(tokens_in_batch, dtype=np.int32))
-            
-                newly_collected = len(tokens_in_batch)
+                list_of_token_arrays_for_current_dataset.append(tokens_np)
+
+                newly_collected = tokens_np.size
                 collected_tokens_for_current_dataset += newly_collected
                 overall_collected_tokens_count += newly_collected
-                overall_progress_bar.update(newly_collected)
+                overall_progress_bar.update(int(newly_collected))
 
                 if collected_tokens_for_current_dataset >= tokens_to_collect_for_this_dataset:
-                    print(f"Collected {collected_tokens_for_current_dataset:,} tokens for {dataset_hf_name}. Breaking from batch loop.")
+                    print(
+                        f"Collected {collected_tokens_for_current_dataset:,} tokens for {dataset_hf_name}. Breaking from batch loop."
+                    )
                     break  # Break from the batch processing loop for the current dataset
             
             # Add collected token arrays from the current dataset to the main list
@@ -229,6 +286,39 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
     sequences = tokens_to_use.reshape(num_sequences_to_create, sequence_length)
     print(f"Created {sequences.shape[0]:,} sequences of length {sequence_length}")
 
-    # Save tokenized data
-    np.save(data_path, sequences)
-    print(f"Saved tokenized mixed data to {data_path}")
+    # ---------------- Train / Validation split -----------------
+    # Reserve a fixed 100M tokens (approx) for validation
+    VALIDATION_TOKEN_TARGET = 10_000_000  # 100M tokens
+    val_sequences_target = VALIDATION_TOKEN_TARGET // sequence_length
+
+    if val_sequences_target == 0:
+        print("Validation split skipped (sequence_length larger than 100M tokens target).")
+        train_sequences = sequences
+        val_sequences = np.empty((0, sequence_length), dtype=sequences.dtype)
+    else:
+        # Ensure we do not request more sequences than we actually have
+        val_sequences_target = min(val_sequences_target, sequences.shape[0] // 20) if sequences.shape[0] < val_sequences_target else val_sequences_target
+        if val_sequences_target > sequences.shape[0]:
+            print(f"Warning: Requested {val_sequences_target:,} validation sequences but only {sequences.shape[0]:,} are available. Using all sequences for training.")
+            train_sequences = sequences
+            val_sequences = np.empty((0, sequence_length), dtype=sequences.dtype)
+        else:
+            train_sequences = sequences[:-val_sequences_target]
+            val_sequences = sequences[-val_sequences_target:]
+
+    # Determine output paths (keep original name for training set)
+    train_path = data_path  # original path for training sequences
+    val_path = data_path.replace(".npy", "_val.npy")
+
+    # Save arrays
+    np.save(train_path, train_sequences)
+    np.save(val_path, val_sequences)
+
+    print(f"Saved {train_sequences.shape[0]:,} training sequences ({train_sequences.shape[0] * sequence_length:,} tokens) to {train_path}")
+    print(f"Saved {val_sequences.shape[0]:,} validation sequences ({val_sequences.shape[0] * sequence_length:,} tokens) to {val_path}")
+
+    return  # Explicit return, nothing follows
+
+
+
+

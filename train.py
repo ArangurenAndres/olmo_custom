@@ -72,7 +72,7 @@ def main():
         # SETUP DATA DIRECTORIES and checkpoints dir, work dir
         timestamp = time.strftime('%m-%d_%H-%M')
         run_dir = os.path.join(config["data_dir"], "checkpoints", f"run_{timestamp}")
-        save_dir = os.path.join("/scratch-shared/delight_team", f"checkpoints_{timestamp}")
+        save_dir = os.path.join(config["save_dir"], f"checkpoints_{timestamp}")
      #   save_dir = os.path.join("train_run", f"checkpoints_{timestamp}")
         work_dir = os.path.join(run_dir, "trainer_work_dir")
         os.makedirs(run_dir, exist_ok=True)
@@ -178,13 +178,13 @@ def main():
             )
 
 
-        validation_path = os.path.join(config["data_dir"], "c4_validation.npy")
+        validation_path = os.path.join(config["data_dir"], config["data_preparation"]["validation_output_file_name"])
         if not os.path.exists(validation_path):
             raise FileNotFoundError(f"Validation dataset not found at {validation_path}. Please run data preparation with validation=True first.")
         lm_eval_dataset_config = NumpyDatasetConfig(
             paths=[validation_path],
             tokenizer=tokenizer_config,
-            sequence_length=config["sequence_length"], # Assuming sequence_length is in your config
+            sequence_length=config["sequence_length"], 
             name=NumpyDatasetType.padded_fsl,
             work_dir=work_dir,
             metadata=[{"label": "c4_validation_custom"}]

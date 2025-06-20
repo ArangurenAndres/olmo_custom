@@ -9,7 +9,6 @@ import os
 import numpy as np
 from data_utils.download_and_tokenizeV2 import download_and_tokenize
 from data_utils.validate_data_prep import validate_tokenized_data
-from data_utils.validation_data_download_and_tokenizeV2 import validation_download_and_tokenize
 from transformers import AutoTokenizer
 from olmo_core.data import TokenizerConfig
 import yaml
@@ -34,25 +33,24 @@ def main():
     data_dir = config["data_dir"]
     os.makedirs(data_dir, exist_ok=True)
     
-    
     # Configure tokenizer and report vocabulary size
     tokenizer_config = TokenizerConfig.gpt_neox_olmo_dolma_v1_5()
 
+    os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
-    if config["data_preparation"]["validation"] == True:
-        data_path = os.path.join(data_dir, config["data_preparation"]["validation_output_file_name"])
-        validation_download_and_tokenize(data_path, config["sequence_length"], config["data_preparation"]["total_tokens_to_collect"])
-
-    else:
-        data_path = os.path.join(data_dir, config["data_preparation"]["output_file_name"])
-        download_and_tokenize(data_path, 
-            config["sequence_length"], 
-            config["data_preparation"]["total_tokens_to_collect"], 
-            config["data_preparation"]["tokenizer_processing_batch_size"], 
-            config["data_preparation"]["dataset_proportions"])
+    # Download and tokenize the data
+    data_path = os.path.join(data_dir, config["data_preparation"]["output_file_name"] + ".npy")
+    download_and_tokenize(
+            data_path=data_path,
+            sequence_length=config["sequence_length"],
+            total_tokens_with_margin=config["data_preparation"]["total_tokens_to_collect"],
+            tokenizer_processing_batch_size=config["data_preparation"]["tokenizer_processing_batch_size"],
+            dataset_proportions=config["data_preparation"]["dataset_proportions"]
+        )
     
     # Validate the tokenized data
-    validate_tokenized_data(data_path, config["sequence_length"])
+    validate_tokenized_data(os.path.join(data_dir, config["data_preparation"]["output_file_name"] + ".npy"), config["sequence_length"])
+    validate_tokenized_data(os.path.join(data_dir, config["data_preparation"]["output_file_name"] + "_val.npy"), config["sequence_length"])
 
     print(f"Data preparation complete!")
 
