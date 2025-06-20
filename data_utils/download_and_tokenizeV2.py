@@ -7,8 +7,9 @@ from transformers import AutoTokenizer
 from olmo_core.data import TokenizerConfig
 import torch
 from torch.utils.data import DataLoader, IterableDataset
+from numpy.lib.format import open_memmap  # allows writing large .npy chunks without loading them fully into RAM
 
-def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, tokenizer_processing_batch_size, dataset_proportions):
+def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, tokenizer_processing_batch_size, dataset_proportions, validation_token_target):
     """
     Download and tokenize multiple datasets according to specified proportions,
     collecting tokens up to total_tokens_with_margin.
@@ -83,8 +84,19 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
 
 
 
-    all_collected_token_arrays = []
-    overall_collected_tokens_count = 0
+    # ------------------------------------------------------------------
+    # Incremental saving configuration (10B-token chunks)
+    # ------------------------------------------------------------------
+    CHUNK_SIZE_TOKENS = 10_000_000_000  # 10B tokens per intermediate file
+
+    # Runtime bookkeeping
+    chunk_index: int = 0                                 # current chunk id
+    chunk_token_buffer: list[np.ndarray] = []            # list of small arrays that belong to the current chunk
+    tokens_in_current_chunk: int = 0                     # counter for current chunk size
+    saved_chunk_paths: list[str] = []                    # paths of all chunks written to disk, in order
+    saved_chunk_sizes: list[int] = []                    # number of valid tokens in each saved chunk
+
+    overall_collected_tokens_count = 0                   # global counter
 
     print("Starting dataset processing...")
 
@@ -202,9 +214,31 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
 
                 list_of_token_arrays_for_current_dataset.append(tokens_np)
 
+                # ------------------------------------------------------
+                # Stream tokens into 10-B-token chunks on disk
+                # ------------------------------------------------------
                 newly_collected = tokens_np.size
                 collected_tokens_for_current_dataset += newly_collected
                 overall_collected_tokens_count += newly_collected
+
+                # Add current batch to in-memory buffer
+                chunk_token_buffer.append(tokens_np)
+                tokens_in_current_chunk += newly_collected
+
+                # If the chunk reached the threshold, flush it to disk
+                if tokens_in_current_chunk >= CHUNK_SIZE_TOKENS:
+                    concatenated = np.concatenate(chunk_token_buffer)[:CHUNK_SIZE_TOKENS]
+                    chunk_path = f"{data_path}_chunk_{chunk_index}.npy"
+                    np.save(chunk_path, concatenated)
+                    saved_chunk_paths.append(chunk_path)
+                    saved_chunk_sizes.append(concatenated.size)
+
+                    # Prepare for next chunk: keep overflow (if any)
+                    overflow = np.concatenate(chunk_token_buffer)[CHUNK_SIZE_TOKENS:]
+                    chunk_token_buffer = [overflow] if overflow.size > 0 else []
+                    tokens_in_current_chunk = overflow.size
+                    chunk_index += 1
+
                 overall_progress_bar.update(int(newly_collected))
 
                 if collected_tokens_for_current_dataset >= tokens_to_collect_for_this_dataset:
@@ -213,23 +247,30 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
                     )
                     break  # Break from the batch processing loop for the current dataset
             
-            # Add collected token arrays from the current dataset to the main list
-            if list_of_token_arrays_for_current_dataset:
-                # Check if this dataset should be duplicated
-                if ("sciq" in dataset_hf_name.lower() or 
-                    "arc-challenge" in dataset_hf_name.lower() or 
-                    "arc-easy" in dataset_hf_name.lower()):
-                    duplicate_times = 10  # Total times to include the data (1 original + 2 duplicates)
-                    print(f"Duplicating {dataset_hf_name} data {duplicate_times} times...")
-                    for i in range(duplicate_times):
-                        all_collected_token_arrays.extend(list_of_token_arrays_for_current_dataset)
-                        print(f"Added copy {i+1}/{duplicate_times} of {len(list_of_token_arrays_for_current_dataset)} token arrays from {dataset_hf_name}")
-                else:
-                    all_collected_token_arrays.extend(list_of_token_arrays_for_current_dataset)
-                
-                print(f"Total arrays in main collection: {len(all_collected_token_arrays)} arrays.")
-            else:
-                print(f"No token arrays were collected for {dataset_hf_name} in this iteration.")
+            # Duplication weighting (for small QA datasets) handled by writing tokens multiple times
+            if (list_of_token_arrays_for_current_dataset and
+                ("sciq" in dataset_hf_name.lower() or 
+                 "arc-challenge" in dataset_hf_name.lower() or 
+                 "arc-easy" in dataset_hf_name.lower())):
+                duplicate_times = 9  # we already wrote them once; add 9 more copies (total 10)
+                print(f"Duplicating {dataset_hf_name} token batches {duplicate_times} additional times for weighting...")
+                for _ in range(duplicate_times):
+                    for dup_arr in list_of_token_arrays_for_current_dataset:
+                        # write duplicate directly into chunk streaming buffers
+                        chunk_token_buffer.append(dup_arr)
+                        tokens_in_current_chunk += dup_arr.size
+                        if tokens_in_current_chunk >= CHUNK_SIZE_TOKENS:
+                            concatenated = np.concatenate(chunk_token_buffer)[:CHUNK_SIZE_TOKENS]
+                            chunk_path = f"{data_path}_chunk_{chunk_index}.npy"
+                            np.save(chunk_path, concatenated)
+                            saved_chunk_paths.append(chunk_path)
+                            saved_chunk_sizes.append(concatenated.size)
+                            overflow = np.concatenate(chunk_token_buffer)[CHUNK_SIZE_TOKENS:]
+                            chunk_token_buffer = [overflow] if overflow.size > 0 else []
+                            tokens_in_current_chunk = overflow.size
+                            chunk_index += 1
+            # Clear per-dataset buffer to free memory
+            list_of_token_arrays_for_current_dataset.clear()
 
             # Check if the overall token collection goal has been met or exceeded
             if overall_collected_tokens_count >= total_tokens_with_margin:
@@ -240,19 +281,40 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
 
 
     # --- End of all dataset processing ---
-    if not all_collected_token_arrays:
-        print("Error: No token arrays were collected from any dataset. Cannot proceed.")
+    # No need to reference all_collected_token_arrays any longer – tokens were saved incrementally.
+
+    print(f"\nCollected {overall_collected_tokens_count:,} total tokens across {len(saved_chunk_paths)} chunk files.")
+
+    # After all datasets processed, flush remaining buffer (if any) as the last chunk
+    if tokens_in_current_chunk > 0 and chunk_token_buffer:
+        concatenated = np.concatenate(chunk_token_buffer)
+        chunk_path = f"{data_path}_chunk_{chunk_index}.npy"
+        np.save(chunk_path, concatenated)
+        saved_chunk_paths.append(chunk_path)
+        saved_chunk_sizes.append(concatenated.size)
+        chunk_index += 1
+
+    if not saved_chunk_paths:
+        print("Error: No token files were saved. Cannot proceed.")
         return
 
-    print(f"\nCollected {overall_collected_tokens_count:,} total tokens from {len(all_collected_token_arrays)} dataset segments.")
-    print("Concatenating all collected NumPy arrays...")
-    all_tokens_np = np.concatenate(all_collected_token_arrays)
-    del all_collected_token_arrays
+    print(f"\nCollected {overall_collected_tokens_count:,} total tokens across {len(saved_chunk_paths)} chunk files.")
+
+    # ------------------------------------------------------------------
+    # Concatenate all chunks into a single memory-mapped array (RAM-safe)
+    # ------------------------------------------------------------------
+    final_tokens_path = f"{data_path}_all_tokens.npy"
+    all_tokens_mm = open_memmap(final_tokens_path, mode="w+", dtype=np.int32, shape=(overall_collected_tokens_count,))
+
+    write_position = 0
+    for path, size in zip(saved_chunk_paths, saved_chunk_sizes):
+        chunk_arr = np.load(path, mmap_mode="r")[:size]
+        all_tokens_mm[write_position:write_position + size] = chunk_arr
+        write_position += size
+
+    all_tokens_mm.flush()
+    all_tokens_np = all_tokens_mm  # memmap acts like a NumPy array without loading everything
     print(f"Total concatenated tokens: {len(all_tokens_np):,}")
-
-    #np.random.shuffle(all_tokens_np)
-    # FKING stupid shuffled all tokens that are in 1d array
-
 
     # --- Reshape and Save ---
     num_sequences_possible = len(all_tokens_np) // sequence_length
@@ -291,8 +353,7 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
 
     # ---------------- Train / Validation split -----------------
     # Reserve a fixed 100M tokens (approx) for validation
-    VALIDATION_TOKEN_TARGET = 10_000_000  # 100M tokens
-    val_sequences_target = VALIDATION_TOKEN_TARGET // sequence_length
+    val_sequences_target = validation_token_target // sequence_length
 
     if val_sequences_target == 0:
         print("Validation split skipped (sequence_length larger than 100M tokens target).")

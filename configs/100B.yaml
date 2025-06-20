@@ -10,8 +10,8 @@ sequence_length: 1024
 # It represents the number of sequences in a global batch (for one optimizer step).
 batch_size: 128 # has to be divisible with micro batch* numbre of GPUs
 micro_batch_size: 32 # micro_batch_size = micro_batch_size * sequence_length 
-steps: 3000
-num_workers: 16
+steps: 20000
+num_workers: 32
 
 use_flash_attn: True
 
@@ -19,8 +19,8 @@ use_flash_attn: True
 resume_from: None # train_run/checkpoints_06-14_16-39 
 
 #set to - (minus) to disable evaluation and inference
-evaluation_times: 2 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
-inference_times: 2   # Run inference 2 times (inference_interval = steps/inference_times)
+evaluation_times: 20 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
+inference_times: 20   # Run inference 2 times (inference_interval = steps/inference_times)
 
 # Group Query Attention (GQA)
 n_kv_heads: 12                             # Number of key/value heads for GQA. Must be <= n_heads.
@@ -40,8 +40,9 @@ output_scalars: [1.0, 1.0]
 #output_scalars: [0.8, 1.2]
 verbose_scaling: True
 
-wandb_name: "test_run"
-train_data_file: "100B.npy"
+wandb_name: "4B"
+train_data_file: "4B.npy"
+validation_data_file: "c4_validation.npy"
 
 # config.yaml additions
 distributed:
@@ -73,11 +74,12 @@ save_dir: /scratch-shared/delight_team/checkpoints
 #------------------------------------------------------------------------------------------------
 data_preparation:
  # Name of the tokenized file within data.data_dir
-  #validation_output_file_name: "c4_validation.npy"
+  validation_output_file_name: "c4_validation.npy"
   #validation: False
   #tokenizer_name: "allenai/gpt-neox-olmo-dolma-v1_5" # assuming we're not changin tokenizer
   output_file_name: "100B"
   total_tokens_to_collect: 100_000_000_000
+  validation_token_target: 50_000_000
   tokenizer_processing_batch_size: 10000  # how many articles/entries to tokenize at once
   dataset_proportions:  
     ### SCIENCE small DATASETS - always included.

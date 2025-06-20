@@ -49,19 +49,14 @@ import torch.distributed as dist
 
 def main():
 
-    
+    logging.getLogger().setLevel(logging.INFO)
+
     prepare_training_environment(
         seed=42,
         backend="cpu:gloo,cuda:nccl",
         timeout=timedelta(minutes=30)
     )
     
-
-    # After 2 minutes, reduce logging level to WARNING - because I want to see the mdoel details, but i dont want to see everysingle step
-    logging.getLogger().setLevel(logging.INFO)
-    start_time = time.time()
-    if time.time() - start_time > 60:  # 120 seconds = 2 minutes
-        logging.getLogger().setLevel(logging.WARNING)
 
 
     try:
@@ -178,7 +173,7 @@ def main():
             )
 
 
-        validation_path = os.path.join(config["data_dir"], config["data_preparation"]["validation_output_file_name"])
+        validation_path = os.path.join(config["data_dir"], config["validation_data_file"])
         if not os.path.exists(validation_path):
             raise FileNotFoundError(f"Validation dataset not found at {validation_path}. Please run data preparation with validation=True first.")
         lm_eval_dataset_config = NumpyDatasetConfig(
@@ -257,6 +252,14 @@ def main():
             print(f"Rank {get_rank()}: All ranks ready, starting training")
         else:
             print("Single process: starting training")
+
+
+
+        logging.getLogger("olmo_core.train.callbacks.console_logger").setLevel(logging.WARNING)
+        # Optionally raise the root level as well.
+        logging.getLogger().setLevel(logging.WARNING)
+
+
 
         # Start training with error handling
         try:

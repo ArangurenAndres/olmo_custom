@@ -45,7 +45,8 @@ def main():
             sequence_length=config["sequence_length"],
             total_tokens_with_margin=config["data_preparation"]["total_tokens_to_collect"],
             tokenizer_processing_batch_size=config["data_preparation"]["tokenizer_processing_batch_size"],
-            dataset_proportions=config["data_preparation"]["dataset_proportions"]
+            dataset_proportions=config["data_preparation"]["dataset_proportions"],
+            validation_token_target=config["data_preparation"].get("validation_token_target", 10_000_000)
         )
     
     # Validate the tokenized data
