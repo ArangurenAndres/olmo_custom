@@ -41,6 +41,7 @@ __pycache__/
 
 # Python virtual environments
 venv/
+new_venv/
 .env/
 
 checkpoints_*/
