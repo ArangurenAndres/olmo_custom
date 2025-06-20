@@ -170,20 +170,23 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
 
         torch_dataset = HFIterableDatasetWrapper(current_dataset_object)
 
-        # Use a conservative number of workers to avoid hammering the HF Hub with too many
-        # concurrent requests (which can trigger 429 errors).  
-        # Default to **1** but allow override via env-var STREAMING_NUM_WORKERS.
-        if "dclm" or "wiki" in dataset_hf_name.lower():
+        # Heuristic: allow more workers for very large, highly‐sharded corpora (e.g. Dolma or Wiki dumps).
+        if ("dclm" in dataset_hf_name.lower()) or ("wiki" in dataset_hf_name.lower()):
             num_workers_dl = int(os.getenv("STREAMING_NUM_WORKERS", "8"))
         else:
             num_workers_dl = int(os.getenv("STREAMING_NUM_WORKERS", "1"))
+
+        max_shards = getattr(current_dataset_object, "num_shards", None)
+
+        num_workers_dl = min(num_workers_dl, max_shards)
+
 
         data_loader = DataLoader(
             torch_dataset,
             batch_size=tokenizer_processing_batch_size,
             num_workers=num_workers_dl,
             collate_fn=collate_tokens_pytorch,
-            prefetch_factor=2 if num_workers_dl > 0 else None,
+            prefetch_factor=8 if num_workers_dl > 0 else None,
             pin_memory=False,
         )
 

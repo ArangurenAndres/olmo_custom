@@ -81,12 +81,12 @@ data_preparation:
   tokenizer_processing_batch_size: 10000  # how many articles/entries to tokenize at once
   dataset_proportions:  
     ### SCIENCE small DATASETS - always included.
-    allenai/ai2_arc/ARC-Challenge: 0.2
-    allenai/ai2_arc/ARC-Easy: 0.2
-    allenai/sciq: 0.2
-
-    allenai/dolmino-mix-1124/wiki: 0.1
+    allenai/ai2_arc/ARC-Challenge: 0.02
+    allenai/ai2_arc/ARC-Easy: 0.02
+    allenai/sciq: 0.02
     allenai/dolmino-mix-1124/dclm: 0.97
+    allenai/dolmino-mix-1124/wiki: 0.04
+    #allenai/dolmino-mix-1124/dclm: 0.97
 
     #allenai/dolmino-mix-1124/flan: 0.8
     #allenai/dolmino-mix-1124/pes2o: 0.8
