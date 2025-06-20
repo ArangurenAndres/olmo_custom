@@ -98,7 +98,7 @@ class Transformer(nn.Module):
         super().__init__()
 
         # vocab_size = 32000
-        # n_layers = 19
+        # n_layers = 18 #19
         # d_model = 1280
 
         cache = BufferCache()
@@ -121,6 +121,12 @@ class Transformer(nn.Module):
         # breakpoint()
         ffn_params = yaml_object["fnn_scalars"] #[0.5, 4.0]
         qkv_multi = yaml_object["qkv_scalars"] #[0.5, 1.0]
+
+        layer_freezing = yaml_object["layer_freeze"]
+        # print(layer_freezing)
+        # breakpoint()
+
+
         # CoreNet uses round here
         if len(ffn_params) == 2:
             multiplies = [round(layer_multiply,2) for layer_multiply in np.linspace(
@@ -144,7 +150,15 @@ class Transformer(nn.Module):
         init_hidden = self.d_model
         dim_devisor = 256
         # corenet starts with differnt sizes and multipliers and such
+        if layer_freezing:
+            multiplies[0] = 4.0
+            multiplies[-1] = 4.0
+
+        # breakpoint()
+
         dimsizes = [self.make_divisible(lm * init_hidden, dim_devisor) for lm in multiplies]
+
+
 
         # TODO: Now the hard part, the actaul query heads....
 
@@ -174,6 +188,10 @@ class Transformer(nn.Module):
         else:
             n_query_groups = block.attention.n_heads // block.attention.n_kv_heads
             head_multiple_of = n_query_groups
+
+        if layer_freezing:
+            qvk_multiplies[0] = 1.0
+            qvk_multiplies[-1] = 1.0
 
         #TODO: this is a problem, we'll need to change the defintion of the attention layer
         # Cuz now we get more heads, but the dimensionlity will not change, so we just get more small heads...
