@@ -97,6 +97,10 @@ class Transformer(nn.Module):
     ):
         super().__init__()
 
+        # vocab_size = 32000
+        # n_layers = 18 #19
+        # d_model = 1280
+
         cache = BufferCache()
 
         self.d_model = d_model
@@ -117,56 +121,93 @@ class Transformer(nn.Module):
         # breakpoint()
         ffn_params = yaml_object["fnn_scalars"] #[0.5, 4.0]
         qkv_multi = yaml_object["qkv_scalars"] #[0.5, 1.0]
+
+        layer_freezing = yaml_object["layer_freeze"]
+        # print(layer_freezing)
+        # breakpoint()
+
+
         # CoreNet uses round here
-        multiplies = [round(layer_multiply,2) for layer_multiply in np.linspace(
-            ffn_params[0], ffn_params[1],
-            num=n_layers,
-            dtype=float
-        )]
+        if len(ffn_params) == 2:
+            multiplies = [round(layer_multiply,2) for layer_multiply in np.linspace(
+                ffn_params[0], ffn_params[1],
+                num=n_layers,
+                dtype=float
+            )]
+        else:
+            if n_layers % 2 == 0:
+                x_s = [0, np.ceil(n_layers/2)-1, np.ceil(n_layers/2), n_layers-1]
+                y_vals = [ffn_params[0], ffn_params[1], ffn_params[1], ffn_params[0]]
+            else:
+                x_s = [0, np.ceil(n_layers/2)-1, n_layers-1]
+                y_vals = ffn_params
+            new_x = np.arange(0, n_layers)
+            multiplies = np.interp(new_x, x_s, y_vals)
+
+
+
         # init_hidden = block.feed_forward.hidden_size
         init_hidden = self.d_model
         dim_devisor = 256
         # corenet starts with differnt sizes and multipliers and such
+        if layer_freezing:
+            multiplies[0] = 4.0
+            multiplies[-1] = 4.0
+
+        # breakpoint()
+
         dimsizes = [self.make_divisible(lm * init_hidden, dim_devisor) for lm in multiplies]
 
+
+
         # TODO: Now the hard part, the actaul query heads....
-        qvk_multiplies = [round(layer_multiply,2) for layer_multiply in np.linspace(
-            qkv_multi[0], qkv_multi[1],
-            num=n_layers,
-            dtype=float
-        )]
+
+        if len(qkv_multi) == 2:
+            qvk_multiplies = [round(layer_multiply,2) for layer_multiply in np.linspace(
+                qkv_multi[0], qkv_multi[1],
+                num=n_layers,
+                dtype=float
+            )]
+        else:
+            if n_layers % 2 == 0:
+                x_s = [0, np.ceil(n_layers/2)-1, np.ceil(n_layers/2), n_layers-1]
+                y_vals = [qkv_multi[0], qkv_multi[1], qkv_multi[1], qkv_multi[0]]
+            else:
+                x_s = [0, np.ceil(n_layers/2)-1, n_layers-1]
+                y_vals = qkv_multi
+            new_x = np.arange(0, n_layers)
+            qvk_multiplies = np.interp(new_x, x_s, y_vals)
 
         # Heres the thing, openELM uses dims size andd head size, not number of heads
         # When using grouped queried attention, we need to make sure its divisible by the number of groups
-        # TODO: fix this for gqa
-        # query_dims = [int(self.make_divisible(self.d_model*m, )) for m in qvk_multiplies]
-        head_multiple_of = 2
         init_head = block.attention.n_heads
-
-        #TODO: this is a problem, we'll need to change the defintion of the attention layer
-        # Cuz now we get more heads, but the dimensionlity will not change, so we just get more small heads...
-        n_heads_layer = [int(self.make_divisible(init_head * m, head_multiple_of)) for m in qvk_multiplies]
-        # head_dim = 128
-        head_dim =  yaml_object["head_dim"] #64
-        model_dim = [int(self.make_divisible(d_model * m, head_multiple_of * head_dim)) for m in qvk_multiplies]
-        # breakpoint()
-
-        # TODO: check this
-        # block.attention.n_kv_heads = 2
 
         if block.attention.n_kv_heads is None:
             n_query_groups = None
+            head_multiple_of = 2
         else:
             n_query_groups = block.attention.n_heads // block.attention.n_kv_heads
+            head_multiple_of = n_query_groups
+
+        if layer_freezing:
+            qvk_multiplies[0] = 1.0
+            qvk_multiplies[-1] = 1.0
+
+        #TODO: this is a problem, we'll need to change the defintion of the attention layer
+        # Cuz now we get more heads, but the dimensionlity will not change, so we just get more small heads...
+
+        head_dim =  self.d_model // self.n_attn_heads
+        model_dim = [int(self.make_divisible(d_model * m, head_multiple_of * head_dim)) for m in qvk_multiplies]
+
 
         block.attention.n_kv_heads = n_query_groups
-        # n_query_groups = self.d_model //
+        layer_params = {}
 
-        # breakpoint()
         for block_idx in range(n_layers):
             block.feed_forward.hidden_size = dimsizes[block_idx] #init_hidden * multiplies[block_idx]
             block.attention.n_heads = model_dim[block_idx] #n_heads_layer[block_idx]
-            # block.attention.d_model = model_dim[block_idx]
+            # print(block.attention.n_heads)
+            # # block.attention.d_model = model_dim[block_idx]
             block_ = block.build(
                 d_model=d_model,
                 block_idx=block_idx,
@@ -174,10 +215,18 @@ class Transformer(nn.Module):
                 cache=cache,
             )
             self._validate_block(block_)
+
+            block_params = sum(p.numel() for p in block_.parameters())
+            layer_params[block_idx+1] = block_params
+
             self.blocks[str(block_idx)] = block_
         self.lm_head = lm_head.build(
             d_model=d_model, vocab_size=vocab_size, init_device=init_device
         )
+
+        # print(self.num_params)
+        # print(self.num_trainable_params)
+        # print(layer_params)
         # breakpoint()
 
         self.init_device = init_device

@@ -497,6 +497,18 @@ class TransformerTrainModule(TrainModule):
         if isinstance(self.optim, SkipStepOptimizer):
             self.record_metric("step skipped", self.optim.step_skipped, namespace="optim")
 
+        # --- New: Always record learning rate, even when no scheduler is used ---
+        if self.scheduler is None:
+            for group_idx, group in enumerate(self.optim.param_groups):
+                # Some optimizers may store lr as tensor
+                lr_value = (
+                    group["lr"].item() if isinstance(group["lr"], torch.Tensor) else group["lr"]
+                )
+                self.trainer.record_metric(
+                    f"LR (group {group_idx})", lr_value, namespace="optim"
+                )
+        # -----------------------------------------------------------------------
+
         self.model.post_optim_step()
 
     def zero_grads(self):

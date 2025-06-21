@@ -369,6 +369,14 @@ class BasicTrainModule(TrainModule):
         # Step optimizer.
         self.optim.step()
 
+        # --- New: Record learning rate per optimizer group ---
+        for group_idx, group in enumerate(self.optim.param_groups):
+            lr_value = group["lr"].item() if isinstance(group["lr"], torch.Tensor) else group["lr"]
+            self.trainer.record_metric(
+                f"LR (group {group_idx})", lr_value, namespace="optim"
+            )
+        # ------------------------------------------------------
+
     def zero_grads(self):
         self.optim.zero_grad(set_to_none=True)
 

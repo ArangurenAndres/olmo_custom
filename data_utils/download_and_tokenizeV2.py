@@ -87,7 +87,7 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
     # ------------------------------------------------------------------
     # Incremental saving configuration (10B-token chunks)
     # ------------------------------------------------------------------
-    CHUNK_SIZE_TOKENS = 10_000_000_000  # 10B tokens per intermediate file
+    CHUNK_SIZE_TOKENS = 100_000_000  # 10B tokens per intermediate file
 
     # Runtime bookkeeping
     chunk_index: int = 0                                 # current chunk id
@@ -144,7 +144,9 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
 
 
 
-        list_of_token_arrays_for_current_dataset = []
+        # For large streaming datasets we must NOT keep every batch in RAM.
+        # We therefore avoid storing token arrays long-term. Duplication for
+        # small QA datasets is handled on the fly.
         collected_tokens_for_current_dataset = 0
             
         # ------------------ PyTorch DataLoader Setup ------------------
@@ -212,32 +214,40 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
                 if tokens_np.size == 0:
                     continue
 
-                list_of_token_arrays_for_current_dataset.append(tokens_np)
+                # ------------------------------------------------------
+                # Stream tokens into 10-B-token chunks on disk, with optional
+                # up-weighting (duplication) of small datasets.
+                # ------------------------------------------------------
 
-                # ------------------------------------------------------
-                # Stream tokens into 10-B-token chunks on disk
-                # ------------------------------------------------------
                 newly_collected = tokens_np.size
                 collected_tokens_for_current_dataset += newly_collected
                 overall_collected_tokens_count += newly_collected
 
-                # Add current batch to in-memory buffer
-                chunk_token_buffer.append(tokens_np)
-                tokens_in_current_chunk += newly_collected
+                # Figure out duplication factor for weighting.
+                if ("sciq" in dataset_hf_name.lower() or
+                    "arc-challenge" in dataset_hf_name.lower() or
+                    "arc-easy" in dataset_hf_name.lower()):
+                    repeat = 10  # write 10 copies total (original + 9 dupes)
+                else:
+                    repeat = 1
 
-                # If the chunk reached the threshold, flush it to disk
-                if tokens_in_current_chunk >= CHUNK_SIZE_TOKENS:
-                    concatenated = np.concatenate(chunk_token_buffer)[:CHUNK_SIZE_TOKENS]
-                    chunk_path = f"{data_path}_chunk_{chunk_index}.npy"
-                    np.save(chunk_path, concatenated)
-                    saved_chunk_paths.append(chunk_path)
-                    saved_chunk_sizes.append(concatenated.size)
+                for _ in range(repeat):
+                    chunk_token_buffer.append(tokens_np)
+                    tokens_in_current_chunk += newly_collected
 
-                    # Prepare for next chunk: keep overflow (if any)
-                    overflow = np.concatenate(chunk_token_buffer)[CHUNK_SIZE_TOKENS:]
-                    chunk_token_buffer = [overflow] if overflow.size > 0 else []
-                    tokens_in_current_chunk = overflow.size
-                    chunk_index += 1
+                    # Flush full chunks immediately after each copy so buffer
+                    # never grows beyond CHUNK_SIZE_TOKENS + one batch.
+                    if tokens_in_current_chunk >= CHUNK_SIZE_TOKENS:
+                        concatenated = np.concatenate(chunk_token_buffer)[:CHUNK_SIZE_TOKENS]
+                        chunk_path = f"{data_path}_chunk_{chunk_index}.npy"
+                        np.save(chunk_path, concatenated)
+                        saved_chunk_paths.append(chunk_path)
+                        saved_chunk_sizes.append(concatenated.size)
+
+                        overflow = np.concatenate(chunk_token_buffer)[CHUNK_SIZE_TOKENS:]
+                        chunk_token_buffer = [overflow] if overflow.size > 0 else []
+                        tokens_in_current_chunk = overflow.size
+                        chunk_index += 1
 
                 overall_progress_bar.update(int(newly_collected))
 
@@ -247,30 +257,7 @@ def download_and_tokenize(data_path, sequence_length, total_tokens_with_margin, 
                     )
                     break  # Break from the batch processing loop for the current dataset
             
-            # Duplication weighting (for small QA datasets) handled by writing tokens multiple times
-            if (list_of_token_arrays_for_current_dataset and
-                ("sciq" in dataset_hf_name.lower() or 
-                 "arc-challenge" in dataset_hf_name.lower() or 
-                 "arc-easy" in dataset_hf_name.lower())):
-                duplicate_times = 9  # we already wrote them once; add 9 more copies (total 10)
-                print(f"Duplicating {dataset_hf_name} token batches {duplicate_times} additional times for weighting...")
-                for _ in range(duplicate_times):
-                    for dup_arr in list_of_token_arrays_for_current_dataset:
-                        # write duplicate directly into chunk streaming buffers
-                        chunk_token_buffer.append(dup_arr)
-                        tokens_in_current_chunk += dup_arr.size
-                        if tokens_in_current_chunk >= CHUNK_SIZE_TOKENS:
-                            concatenated = np.concatenate(chunk_token_buffer)[:CHUNK_SIZE_TOKENS]
-                            chunk_path = f"{data_path}_chunk_{chunk_index}.npy"
-                            np.save(chunk_path, concatenated)
-                            saved_chunk_paths.append(chunk_path)
-                            saved_chunk_sizes.append(concatenated.size)
-                            overflow = np.concatenate(chunk_token_buffer)[CHUNK_SIZE_TOKENS:]
-                            chunk_token_buffer = [overflow] if overflow.size > 0 else []
-                            tokens_in_current_chunk = overflow.size
-                            chunk_index += 1
-            # Clear per-dataset buffer to free memory
-            list_of_token_arrays_for_current_dataset.clear()
+            # Already handled duplication above; nothing stored long-term, buffer managed per-batch.
 
             # Check if the overall token collection goal has been met or exceeded
             if overall_collected_tokens_count >= total_tokens_with_margin:
