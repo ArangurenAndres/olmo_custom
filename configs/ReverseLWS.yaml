@@ -1,0 +1,256 @@
+wandb_project: "final_experiments"
+
+wandb_name: "ReverseLWS"
+
+
+#------------------------------------------------------------------------------------------------
+# General Important Parameters (Top-level)
+#------------------------------------------------------------------------------------------------
+sequence_length: 1024
+# batch_size is a fallback if 'global_batch_size' in the Training Hyperparameters section is not specified.
+# It represents the number of sequences in a global batch (for one optimizer step).
+batch_size: 384 # has to be divisible with micro batch* numbre of GPUs
+micro_batch_size: 48 # micro_batch_size = micro_batch_size * sequence_length 
+steps: 13_000
+num_workers: 32
+
+use_flash_attn: True
+
+
+# now saved at /scratch-shared/delight_team
+resume_from: None
+#/scratch-shared/delight_team/checkpoints/checkpoints_06-21_13-29/step20750 # train_run/checkpoints_06-14_16-39 
+
+#set to - (minus) to disable evaluation and inference
+evaluation_times: 20 # run evaluation 2 times (eval_interval = steps/evaluation_interval) + one time at the beginning
+inference_times: 20   # Run inference 2 times (inference_interval = steps/inference_times)
+
+# Group Query Attention (GQA)
+n_kv_heads: 4                             # Number of key/value heads for GQA. Must be <= n_heads.
+                                          # Make sure build_model passes this to TransformerConfig.
+# Layer-Wise Scaling parameters
+
+learning_rate: 0.0006
+# INCREASE LEARNING RATE for small runs <5B tokens
+
+n_layers: 18
+fnn_scalars: [4.0, 0.5]
+qkv_scalars: [1.0, 0.5] 
+layer_freeze: True
+
+
+
+
+#fnn_scalars: [2.0, 5.3]
+#qkv_scalars: [0.5,2.0]
+output_scalars: [1.0, 1.0]
+verbose_scaling: True
+
+train_data_file: "100B.npy"
+validation_data_file: "100B_val.npy"
+
+# config.yaml additions
+distributed:
+  backend: "nccl"
+  timeout_minutes: 30
+  
+
+# FSDP specific
+fsdp:
+  param_dtype: "bfloat16"
+  reduce_dtype: "float32"
+  wrapping_strategy: "by_block"
+  cpu_offload: false
+  
+# Checkpointing
+save_interval: 100 # we're not actually using this, it's the default 250 now
+checkpoint_async: true
+
+# -----------------------------------------------------------------------------
+# directories config
+# -----------------------------------------------------------------------------
+data_dir: /scratch-shared/delight_team/data_local_test                # Directory for prepared data and checkpoints
+save_dir: /scratch-shared/delight_team/checkpoints
+
+
+
+#------------------------------------------------------------------------------------------------
+# DATA PREPARATION ARGUMENTS
+#------------------------------------------------------------------------------------------------
+data_preparation:
+ # Name of the tokenized file within data.data_dir
+  validation_output_file_name: "c4_validation.npy"
+  #validation: False
+  #tokenizer_name: "allenai/gpt-neox-olmo-dolma-v1_5" # assuming we're not changin tokenizer
+  output_file_name: "100B"
+  total_tokens_to_collect: 100_000_000
+  validation_token_target: 50_000_000
+  tokenizer_processing_batch_size: 10000  # how many articles/entries to tokenize at once
+  dataset_proportions:  
+    ### SCIENCE small DATASETS - always included.
+    allenai/ai2_arc/ARC-Challenge: 0.02
+    allenai/ai2_arc/ARC-Easy: 0.02
+    allenai/sciq: 0.02
+    allenai/dolmino-mix-1124/wiki: 0.04
+    allenai/dolmino-mix-1124/dclm: 0.97
+    #allenai/dolmino-mix-1124/dclm: 0.97
+
+    #allenai/dolmino-mix-1124/flan: 0.8
+    #allenai/dolmino-mix-1124/pes2o: 0.8
+    
+    ### CODE AND MATH DATASETS
+    #tokyotech-llm/swallow-code/exp1-the-stack-v2: 1.0
+    #math-ai/AutoMathText/code-full: 0.25
+    #math-ai/AutoMathText/web-0.50-to-1.00: 0.5
+    #math-ai/AutoMathText/arxiv-full: 0.5
+
+
+#ds = load_dataset("allenai/ai2_arc", "ARC-Challenge")
+#ds = load_dataset("allenai/ai2_arc", "ARC-Easy")
+#7k rows * 100 tokens = 700k tokens
+
+#ds = load_dataset("allenai/sciq")
+#11k rows * 100 tokens = 1.1M tokens
+
+
+
+#ds = load_dataset("allenai/ai2_arc", "ARC-Easy")  # or ARC-Challenge
+
+# {
+#     "answerKey": "B",
+#     "choices": {
+#         "label": ["A", "B", "C", "D"],
+#         "text": ["Shady areas increased.", "Food sources increased.", "Oxygen levels increased.", "Available water increased."]
+#     },
+#     "id": "Mercury_SC_405487",
+#     "question": "One year, the oak trees in a park began producing more acorns than usual. The next year, the population of chipmunks in the park also increased. Which best explains why there were more chipmunks the next year?"
+# }
+
+#ds = load_dataset("allenai/sciq")
+
+#{
+#    "correct_answer": "coriolis effect",
+#    "distractor1": "muon effect",
+#    "distractor2": "centrifugal effect",
+#    "distractor3": "tropical effect",
+#    "question": "What phenomenon makes global winds blow northeast to southwest or the reverse in the northern hemisphere and northwest to southeast or the reverse in the southern hemisphere?",
+#    "support": "\"Without Coriolis Effect the global winds would blow north to south or south to north. But Coriolis makes them blow northeast to..."
+#}
+
+
+
+#------------------------------------------------------------------------------------------------
+# HF CACHE PATHS - default now, change if needed
+#------------------------------------------------------------------------------------------------
+hf_cache_paths:
+  transformers: cache/transformers
+  datasets: cache/datasets
+  huggingface: cache/huggingface
+
+
+#------------------------------------------------------------------------------------------------
+# WANDB API KEY - put your own key.
+#------------------------------------------------------------------------------------------------
+
+WANDB_API_KEY: "8e07447fa3d6269331f7ecd0b27f8518c2a65855"
+
+
+# -----------------------------------------------------------------------------
+# Training Hyperparameters
+# -----------------------------------------------------------------------------
+# The following block was previously enclosed in """ which is not valid YAML for comments.
+# Each line should be prefixed with # if it's a comment.
+# If these are intended to be active parameters, they should be uncommented and correctly formatted.
+
+# steps: 20                                 # Total number of global training steps (optimizer steps)
+# global_batch_size: 2048                      # Total batch size across all GPUs.
+#                                           # For FSDP, this will be divided among ranks.
+#                                           # Example: 2 GPUs, global_batch_size 8 -> 4 sequences per GPU per global step.
+#                                           # Your previous value was 2, which is very small for a global batch.
+#                                           # Adjust based on your GPU memory and number of GPUs.
+# sequence_length: 1024                     # Sequence length for the model
+# 
+# gradient_accumulation_steps: 1            # Number of micro-steps to accumulate gradients before an optimizer step.
+#                                           # Effective batch size = global_batch_size * gradient_accumulation_steps (conceptually, though OLMo applies global_batch_size per optimizer step)
+#                                           # OLMo's TrainerConfig uses global_batch_size directly for the optimizer step.
+#                                           # The device_train_microbatch_size is what's processed per forward/backward pass on a device.
+#                                           # Set device_train_microbatch_size in TrainerConfig or let OLMo infer.
+#                                           # If OLMo infers, it's often global_batch_size / world_size / gradient_accumulation_steps.
+
+# Assuming the parameters below this line are the ones you actually want active for this section:
+
+#learning_rate: 0.001
+# INCREASE LEARNING RATE for small runs <5B tokens
+weight_decay: 0.01
+betas: [0.9, 0.95]                        # AdamW betas
+seed: 42                                  # Base seed for reproducibility (will be adjusted per rank in train.py)
+
+
+
+# Note: The original config had 'steps', 'global_batch_size', 'sequence_length', 
+# and 'gradient_accumulation_steps' defined both at the top-level (lines 6-9) 
+# and within the commented-out block above. 
+# Ensure the active definitions (e.g., lines 6-9 and 66-77) reflect your intended settings.
+# If the block above (lines 57-71) was meant to be active, you need to remove the # from each line.
+# For now, I am assuming the top-level definitions and the learning_rate, weight_decay etc. below are the active ones.
+
+
+# -----------------------------------------------------------------------------
+# Model Configuration (OLMo-190M base with GQA and LWS)
+# -----------------------------------------------------------------------------
+# These parameters define the model architecture.
+# Ensure your `utils/model.py` correctly uses these values, especially n_kv_heads,
+# and custom LWS scalars if they modify the TransformerConfig or model layers.
+model_dtype: "bf16"                       # Precision for model parameters and computation (e.g., "bf16", "fp32").
+                                          # This will guide dtype in build_model and FSDP settings.
+
+# OLMo-190M defaults (can be overridden if build_model passes them to TransformerConfig)
+global_dim: 768                           # d_model: Dimensionality of the model
+n_heads: 12                               # Number of attention heads
+head_dim: 64                              # Dimensionality of each attention head (global_dim / n_heads)
+
+
+# -----------------------------------------------------------------------------
+# FSDP and Activation Checkpointing
+# -----------------------------------------------------------------------------
+# FSDP settings are largely handled by TransformerDataParallelConfig in utils/model.py
+# Activation checkpointing mode can be configured if needed (e.g., "full", "fine_grained")
+# Defaulting to "full" as set in utils/model.py's TransformerTrainModuleConfig.
+# activation_checkpointing_mode: "full" # Example if you want to control it from here.
+
+# -----------------------------------------------------------------------------
+# Inference Callback
+# -----------------------------------------------------------------------------
+inference_mode: "all"  # Options: "cycle", "all", "random"
+                        # "cycle": Use a different prompt each time
+                        # "all": Run inference on all prompts each time
+                        # "random": Pick a random prompt each time
+
+inference_prompts:
+  - "Once upon a time in a distant galaxy, there lived a curious scientist who discovered that "
+  - "The most important scientific breakthrough of the 21st century was "
+  - "Climate change can be addressed by "
+  - "In the future, artificial intelligence will "
+  - "The key to solving world hunger is "
+  - "Space exploration is important because "
+  - "The biggest challenge facing humanity today is "
+  - "Education should focus on teaching students "
+  - "The role of government in society should be "
+  - "Technology has changed our lives by "
+  - "The most effective way to reduce poverty is "
+  - "Healthcare systems can be improved through "
+  - "The future of renewable energy depends on "
+  - "Social media has impacted society by "
+  - "The importance of biodiversity lies in "
+  - "Economic inequality can be reduced by "
+  - "The next major technological innovation will be "
+  - "Cultural diversity enriches society because "
+  - "The role of art in human development is "
+  - "Mental health awareness is crucial because "
+
+# Alternative: Keep the old single prompt for backward compatibility
+# inference_prompt: "Once upon a time in a distant galaxy, there lived a curious scientist who discovered that "
+
+# global_dim: 768
+# head_dim: 64
+

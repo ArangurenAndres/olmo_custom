@@ -47,3 +47,4 @@ new_venv/
 checkpoints_*/
 
 slurm_outputs/
+old_slurms/

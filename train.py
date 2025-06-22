@@ -65,7 +65,7 @@ def main():
         setup_environment()
 
         # SETUP DATA DIRECTORIES and checkpoints dir, work dir
-        timestamp = time.strftime('%m-%d_%H-%M')
+        timestamp = time.strftime('%m-%d_%H-%M-%S')
         run_dir = os.path.join(config["data_dir"], "checkpoints", f"run_{timestamp}")
         save_dir = os.path.join(config["save_dir"], f"checkpoints_{timestamp}")
      #   save_dir = os.path.join("train_run", f"checkpoints_{timestamp}")
@@ -219,12 +219,12 @@ def main():
             if wandb_cb:
                 trainer_config = trainer_config.with_callback("wandb", wandb_cb)
                 print(f"Rank {get_rank()}: Successfully added WandB Callback")
-            if inference_cb:
-                trainer_config = trainer_config.with_callback("inference", inference_cb)
-                print(f"Rank {get_rank()}: Successfully added Inference Callback")
-            if downstream_eval_cb_config and "test" not in config["wandb_name"]:
-                trainer_config = trainer_config.with_callback("downstream_eval", downstream_eval_cb_config)
-                print(f"Rank {get_rank()}: Successfully added Downstream Eval Callback")
+            #if inference_cb:
+             #   trainer_config = trainer_config.with_callback("inference", inference_cb)
+             #   print(f"Rank {get_rank()}: Successfully added Inference Callback")
+            #if downstream_eval_cb_config and "test" not in config["wandb_name"]:
+            #    trainer_config = trainer_config.with_callback("downstream_eval", downstream_eval_cb_config)
+            #    print(f"Rank {get_rank()}: Successfully added Downstream Eval Callback")
             if lm_eval_callback_config:
                 trainer_config = trainer_config.with_callback("lm_evaluator", lm_eval_callback_config)
                 print(f"Rank {get_rank()}: Successfully added LM Eval Callback")
@@ -263,8 +263,17 @@ def main():
 
         # Start training with error handling
         try:
-            trainer.fit()
-            print("\n✅ Training complete")
+            # Add argument parser for test mode
+            import argparse
+            parser = argparse.ArgumentParser()
+            parser.add_argument('--test', action='store_true', help='Run in test mode')
+            args, unknown = parser.parse_known_args()
+            
+            if not args.test:
+                trainer.fit()
+                print("\n✅ Training complete")
+            else:
+                print("\n🧪 Test mode - skipping training")
         except Exception as e:
             print(f"\n❌ Training failed: {e}")
             if is_distributed():
